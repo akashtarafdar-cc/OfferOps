@@ -1,0 +1,20 @@
+[project]
+name = "offerops"
+version = "0.1.0"
+description = "Automates offer-site domain, DNS, cPanel, email, file, database, and cron provisioning."
+requires-python = ">=3.12"
+authors = [{ name = "OfferOps" }]
+dependencies = [
+  "playwright>=1.44.0"
+]
+
+[project.scripts]
+offerops = "offerops.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["offerops*"]
+exclude = ["data*", "logs*", "state*", "tests*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

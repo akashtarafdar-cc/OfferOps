@@ -1,0 +1,84 @@
+{
+  "defaults": {
+    "cloudflare_plan": "free",
+    "cloudflare_nameservers": {
+      "sweeps": [
+        "addilyn.ns.cloudflare.com",
+        "armfazh.ns.cloudflare.com"
+      ],
+      "ecom": [
+        "gwen.ns.cloudflare.com",
+        "merlin.ns.cloudflare.com"
+      ]
+    },
+    "dns_ttl": 1,
+    "ftp_quota_mb": 1024,
+    "support_mail_quota_mb": 1024,
+    "document_root_template": "public_html",
+    "robots_txt": "User-Agent: *\nDisallow: /\nUser-agent: Googlebot-Image\nDisallow: /*.gif$\n\nUser-agent: Googlebot-Image\nDisallow: /*.jpg$\n\nUser-agent: Googlebot-Image\nDisallow: /*.jpeg$\n\nUser-agent: Googlebot-Image\nDisallow: /*.png$\n\nUser-agent: Googlebot-Image\nDisallow: /*.bmp$\n",
+    "info_php": "<?php phpinfo();\n",
+    "cron": {
+      "minute_min": 15,
+      "minute_max": 25,
+      "hour": "*",
+      "day": "*",
+      "month": "*",
+      "weekday": "*",
+      "command_template": "php -q /home/{cpanel_username}/public_html/{offer_path}/library/cron.php >/dev/null 2>&1"
+    }
+  },
+  "profiles": {
+    "ecom-live": {
+      "kind": "ecom",
+      "cloudflare_account": "ecom",
+      "whm_account": "ecom_live",
+      "servers": ["live"],
+      "dns_records": [
+        { "type": "A", "name": "@", "content": "82.221.128.163", "proxied": true },
+        { "type": "A", "name": "mail", "content": "82.221.128.163", "proxied": false },
+        { "type": "A", "name": "webmail", "content": "82.221.128.163", "proxied": false },
+        { "type": "A", "name": "www", "content": "82.221.128.163", "proxied": true },
+        { "type": "MX", "name": "@", "content": "mail.{domain}", "priority": 10 }
+      ]
+    },
+    "ecom-bkp": {
+      "kind": "ecom",
+      "cloudflare_account": "ecom",
+      "whm_account": "ecom_bkp",
+      "servers": ["bkp"],
+      "dns_records": [
+        { "type": "A", "name": "@", "content": "82.221.143.71", "proxied": true },
+        { "type": "A", "name": "mail", "content": "82.221.143.71", "proxied": false },
+        { "type": "A", "name": "webmail", "content": "82.221.143.71", "proxied": false },
+        { "type": "A", "name": "www", "content": "82.221.143.71", "proxied": true },
+        { "type": "MX", "name": "@", "content": "mail.{domain}", "priority": 10 }
+      ]
+    },
+    "sweeps-live": {
+      "kind": "sweeps",
+      "cloudflare_account": "sweeps",
+      "whm_account": "sweeps_live",
+      "servers": ["live"],
+      "dns_records": [
+        { "type": "A", "name": "@", "content": "82.221.131.39", "proxied": true },
+        { "type": "A", "name": "mail", "content": "82.221.131.39", "proxied": false },
+        { "type": "A", "name": "webmail", "content": "82.221.131.39", "proxied": false },
+        { "type": "A", "name": "www", "content": "82.221.131.39", "proxied": true },
+        { "type": "MX", "name": "@", "content": "mail.{domain}", "priority": 10 }
+      ]
+    },
+    "sweeps-bkp": {
+      "kind": "sweeps",
+      "cloudflare_account": "sweeps",
+      "whm_account": "sweeps_bkp",
+      "servers": ["bkp"],
+      "dns_records": [
+        { "type": "A", "name": "@", "content": "82.221.131.16", "proxied": true },
+        { "type": "A", "name": "mail", "content": "82.221.131.16", "proxied": false },
+        { "type": "A", "name": "webmail", "content": "82.221.131.16", "proxied": false },
+        { "type": "A", "name": "www", "content": "82.221.131.16", "proxied": true },
+        { "type": "MX", "name": "@", "content": "mail.{domain}", "priority": 10 }
+      ]
+    }
+  }
+}
