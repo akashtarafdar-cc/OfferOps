@@ -9,7 +9,12 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+config.json
+config.local.json
 state/
+state/credentials/
+credentials/
+secrets/
 logs/
 *.log
 *.sqlite3

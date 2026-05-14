@@ -29,6 +29,13 @@ class CloudflareClient:
         result = created["result"]
         return {"id": result["id"], "name_servers": result.get("name_servers", []), "plan": plan}
 
+    def set_bot_fight_mode(self, zone_id: str, enabled: bool = True) -> dict[str, Any]:
+        if self.dry_run:
+            return {"id": "bot_fight_mode", "value": "on" if enabled else "off", "editable": True}
+        payload = {"value": "on" if enabled else "off"}
+        response = self.http.request("PATCH", f"/zones/{zone_id}/settings/bot_fight_mode", json_body=payload).body
+        return response["result"]
+
     def upsert_dns_record(self, zone_id: str, record: DnsRecord, domain: str) -> dict[str, Any]:
         if self.dry_run:
             return {"id": f"dry-dns-{record.type}-{record.name}", **asdict(record)}

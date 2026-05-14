@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from .config import AppConfig, Settings
+from .http import HttpError
 from .models import DnsRecord, DomainJob, JobResult, StepResult, StepStatus
 from .providers.cloudflare import CloudflareClient
 from .providers.orange_browser import OrangeAccount, OrangeBrowserClient
@@ -34,7 +35,7 @@ class OfferProvisioner:
             return result
 
         zone_id = ""
-        nameservers = self.config.cloudflare_nameservers_for(job.profile)
+        nameservers: list[str] = []
         cloudflare = self._cloudflare_for(job.profile)
         whm = self._whm_for(job.profile)
         account_password = WhmClient.random_password()
@@ -48,7 +49,8 @@ class OfferProvisioner:
 
         steps = [
             ("cloudflare-zone", lambda: cloudflare.ensure_zone(job.domain, self.config.defaults.get("cloudflare_plan", "free"))),
-            ("orange-nameservers", lambda: self._orange_nameserver_step(job.domain, nameservers)),
+            ("cloudflare-bot-fight-mode", lambda: cloudflare.set_bot_fight_mode(zone_id, self.config.cloudflare_bot_fight_mode_enabled())),
+            ("orange-nameservers", lambda: self._orange_nameserver_step(job.domain, job.profile, nameservers)),
             ("cloudflare-dns", lambda: self._upsert_records(cloudflare, zone_id, job.domain, self.config.dns_records_for(job.profile, job.domain))),
             ("whm-account", lambda: whm.ensure_account(job.domain, account_password)),
             (
@@ -71,8 +73,7 @@ class OfferProvisioner:
                 data = action()
                 if name == "cloudflare-zone":
                     zone_id = str(data["id"])
-                    if not nameservers:
-                        nameservers = list(data.get("name_servers", []))
+                    nameservers = self._preferred_nameservers(data)
                 if name == "whm-account":
                     cpanel_username = data.username
                     account_existed = bool(data.existed)
@@ -80,6 +81,15 @@ class OfferProvisioner:
                     database_info = data
                 result.add(StepResult(name=name, status=StepStatus.DONE, data=self._safe_data(data)))
             except Exception as exc:
+                if name == "cloudflare-bot-fight-mode" and self._should_skip_bot_fight_mode(exc):
+                    result.add(
+                        StepResult(
+                            name=name,
+                            status=StepStatus.SKIPPED,
+                            message=f"Skipping Bot Fight Mode: {exc}",
+                        )
+                    )
+                    continue
                 result.add(step_from_exception(name, exc))
                 break
 
@@ -127,6 +137,10 @@ class OfferProvisioner:
         self.state.save_result(result)
         return result
 
+    def run_orange_nameserver_update(self, domain: str, profile_name: str) -> dict[str, object]:
+        nameservers = self._resolve_nameservers(domain, profile_name)
+        return self._orange_nameserver_step(domain, profile_name, nameservers)
+
     def _cloudflare_for(self, profile_name: str) -> CloudflareClient:
         account_name = self.config.cloudflare_account_for(profile_name)
         if account_name not in self.settings.cloudflare_accounts:
@@ -144,19 +158,21 @@ class OfferProvisioner:
     def _upsert_records(self, cloudflare: CloudflareClient, zone_id: str, domain: str, records: list[DnsRecord]) -> dict[str, object]:
         return {"records": [cloudflare.upsert_dns_record(zone_id, record, domain) for record in records]}
 
-    def _orange_nameserver_step(self, domain: str, nameservers: list[str]) -> dict[str, object]:
+    def _orange_nameserver_step(self, domain: str, profile_name: str, nameservers: list[str]) -> dict[str, object]:
         if self.use_orange_browser:
-            return self._orange_browser().update_nameservers(domain, nameservers)
+            return self._orange_browser(profile_name).update_nameservers(domain, nameservers)
         return {
             "domain": domain,
             "nameservers": nameservers,
             "manual_action": "Update this domain's nameservers in orange hosting/registrar manually.",
         }
 
-    def _orange_browser(self) -> OrangeBrowserClient:
+    def _orange_browser(self, profile_name: str) -> OrangeBrowserClient:
+        allowed_accounts = set(self.config.orange_account_names_for(profile_name))
         accounts = [
             OrangeAccount(name=name, username=username, password=password)
             for name, (username, password) in self.settings.orange_accounts.items()
+            if name in allowed_accounts
         ]
         return OrangeBrowserClient(
             login_url=self.settings.orange_login_url,
@@ -186,3 +202,21 @@ class OfferProvisioner:
         if hasattr(data, "__dataclass_fields__"):
             return {key: value for key, value in asdict(data).items() if "password" not in key.lower()}
         return {"value": str(data)}
+
+    def _resolve_nameservers(self, domain: str, profile_name: str) -> list[str]:
+        zone = self._cloudflare_for(profile_name).ensure_zone(domain, self.config.defaults.get("cloudflare_plan", "free"))
+        return self._preferred_nameservers(zone)
+
+    @staticmethod
+    def _preferred_nameservers(zone_data: object) -> list[str]:
+        if isinstance(zone_data, dict):
+            live_nameservers = [str(item) for item in zone_data.get("name_servers", []) if str(item).strip()]
+            if live_nameservers:
+                return live_nameservers
+        raise ValueError("Cloudflare did not return zone nameservers for this domain.")
+
+    @staticmethod
+    def _should_skip_bot_fight_mode(exc: Exception) -> bool:
+        if isinstance(exc, HttpError) and exc.response is not None:
+            return int(exc.response.status) in {401, 403, 404}
+        return False

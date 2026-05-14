@@ -21,6 +21,11 @@ def main() -> None:
     run_parser.add_argument("--dry-run", action="store_true", help="Print and store planned actions without provider writes.")
     run_parser.add_argument("--orange-browser", action="store_true", help="Use browser automation to search Orange accounts and update nameservers.")
 
+    orange_parser = sub.add_parser("orange-ns", help="Run only the Orange nameserver update step for one domain.")
+    orange_parser.add_argument("--domain", required=True, help="Domain to search in Orange and update nameservers for.")
+    orange_parser.add_argument("--profile", required=True, help="Profile used to resolve the Cloudflare nameservers.")
+    orange_parser.add_argument("--dry-run", action="store_true", help="Show which Orange accounts would be searched without updating anything.")
+
     sub.add_parser("status", help="Print saved job state.")
 
     web_parser = sub.add_parser("web", help="Start the local dashboard.")
@@ -36,6 +41,10 @@ def main() -> None:
         provisioner = OfferProvisioner(settings, config, state, dry_run=args.dry_run, use_orange_browser=args.orange_browser)
         for job in load_jobs(Path(args.csv)):
             print(json.dumps(_result_to_dict(provisioner.run(job)), indent=2))
+    elif args.command == "orange-ns":
+        provisioner = OfferProvisioner(settings, config, state, dry_run=args.dry_run, use_orange_browser=True)
+        result = provisioner.run_orange_nameserver_update(args.domain, args.profile)
+        print(json.dumps(result, indent=2))
     elif args.command == "status":
         print(json.dumps(state.read(), indent=2))
     elif args.command == "web":

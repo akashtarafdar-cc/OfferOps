@@ -31,9 +31,14 @@ class AppConfig:
 
     def profile(self, name: str) -> dict[str, Any]:
         profiles = self.raw.get("profiles", {})
-        if name not in profiles:
+        canonical_name = self.canonical_profile_name(name)
+        if canonical_name not in profiles:
             raise KeyError(f"Unknown profile '{name}'. Add it under profiles in config.")
-        return dict(profiles[name])
+        return dict(profiles[canonical_name])
+
+    @staticmethod
+    def canonical_profile_name(name: str) -> str:
+        return "-".join(str(name).strip().lower().replace("_", " ").split())
 
     def cloudflare_account_for(self, profile_name: str) -> str:
         return str(self.profile(profile_name)["cloudflare_account"])
@@ -41,17 +46,25 @@ class AppConfig:
     def whm_account_for(self, profile_name: str) -> str:
         return str(self.profile(profile_name)["whm_account"])
 
-    def cloudflare_nameservers_for(self, profile_name: str) -> list[str]:
-        account_name = self.cloudflare_account_for(profile_name)
-        configured = self.defaults.get("cloudflare_nameservers", {})
-        if isinstance(configured, dict):
-            return [str(item) for item in configured.get(account_name, [])]
-        return [str(item) for item in configured]
+    def cloudflare_bot_fight_mode_enabled(self) -> bool:
+        return bool(self.defaults.get("cloudflare_bot_fight_mode", True))
+
+    def orange_account_names_for(self, profile_name: str) -> list[str]:
+        account_group = self.cloudflare_account_for(profile_name).strip().lower()
+        profile = self.profile(profile_name)
+        configured = profile.get("orange_accounts", [])
+        if isinstance(configured, list) and configured:
+            return [str(item).strip() for item in configured if str(item).strip()]
+        return [name for name in self._default_orange_account_order() if name.startswith(f"{account_group}_")]
 
     def dns_records_for(self, profile_name: str, domain: str) -> list[DnsRecord]:
         profile = self.profile(profile_name)
         ttl = int(self.defaults.get("dns_ttl", 1))
-        return [DnsRecord.from_dict(item, domain, ttl) for item in profile.get("dns_records", [])]
+        server_ip = self._server_ip_for(profile)
+        return [
+            DnsRecord.from_dict(self._render_record_template(item, domain, server_ip), domain, ttl)
+            for item in profile.get("dns_records", [])
+        ]
 
     def cron_for(self, domain: str, cpanel_username: str, profile_name: str, offer_path: str) -> CronSpec:
         cron = dict(self.defaults.get("cron", {}))
@@ -80,6 +93,39 @@ class AppConfig:
             raise ValueError("cron minute_min cannot be greater than minute_max")
         rng = random.Random(f"{domain}:{profile_name}:cron")
         return rng.randint(minute_min, minute_max)
+
+    @staticmethod
+    def _server_ip_for(profile: dict[str, Any]) -> str:
+        if "server_ip" in profile:
+            return str(profile["server_ip"])
+        env_name = str(profile.get("server_ip_env", "")).strip()
+        if env_name:
+            value = os.getenv(env_name, "").strip()
+            if not value:
+                raise ValueError(f"Environment variable '{env_name}' is required for this profile's DNS records.")
+            return value
+        return ""
+
+    @staticmethod
+    def _render_record_template(record: dict[str, Any], domain: str, server_ip: str) -> dict[str, Any]:
+        rendered: dict[str, Any] = {}
+        for key, value in record.items():
+            if isinstance(value, str):
+                rendered[key] = value.format(domain=domain, server_ip=server_ip)
+            else:
+                rendered[key] = value
+        return rendered
+
+    @staticmethod
+    def _default_orange_account_order() -> list[str]:
+        return [
+            "sweeps_live",
+            "sweeps_bkp",
+            "sweeps_live_2",
+            "sweeps_bkp_2",
+            "ecom_live",
+            "ecom_bkp",
+        ]
 
 
 def load_dotenv(path: Path = Path(".env")) -> None:
@@ -128,15 +174,31 @@ def load_settings() -> Settings:
             os.getenv("WHM_SWEEPS_BKP_PACKAGE", ""),
             os.getenv("WHM_SWEEPS_BKP_CONTACT_EMAIL", ""),
         ),
+        "sweeps_live_2": (
+            os.getenv("WHM_SWEEPS_LIVE_2_BASE_URL", ""),
+            os.getenv("WHM_SWEEPS_LIVE_2_USERNAME", ""),
+            os.getenv("WHM_SWEEPS_LIVE_2_API_TOKEN", ""),
+            os.getenv("WHM_SWEEPS_LIVE_2_PACKAGE", ""),
+            os.getenv("WHM_SWEEPS_LIVE_2_CONTACT_EMAIL", ""),
+        ),
+        "sweeps_bkp_2": (
+            os.getenv("WHM_SWEEPS_BKP_2_BASE_URL", ""),
+            os.getenv("WHM_SWEEPS_BKP_2_USERNAME", ""),
+            os.getenv("WHM_SWEEPS_BKP_2_API_TOKEN", ""),
+            os.getenv("WHM_SWEEPS_BKP_2_PACKAGE", ""),
+            os.getenv("WHM_SWEEPS_BKP_2_CONTACT_EMAIL", ""),
+        ),
     }
     orange_accounts = {
         "sweeps_live": (os.getenv("ORANGE_SWEEPS_LIVE_USERNAME", ""), os.getenv("ORANGE_SWEEPS_LIVE_PASSWORD", "")),
         "sweeps_bkp": (os.getenv("ORANGE_SWEEPS_BKP_USERNAME", ""), os.getenv("ORANGE_SWEEPS_BKP_PASSWORD", "")),
+        "sweeps_live_2": (os.getenv("ORANGE_SWEEPS_LIVE_2_USERNAME", ""), os.getenv("ORANGE_SWEEPS_LIVE_2_PASSWORD", "")),
+        "sweeps_bkp_2": (os.getenv("ORANGE_SWEEPS_BKP_2_USERNAME", ""), os.getenv("ORANGE_SWEEPS_BKP_2_PASSWORD", "")),
         "ecom_live": (os.getenv("ORANGE_ECOM_LIVE_USERNAME", ""), os.getenv("ORANGE_ECOM_LIVE_PASSWORD", "")),
         "ecom_bkp": (os.getenv("ORANGE_ECOM_BKP_USERNAME", ""), os.getenv("ORANGE_ECOM_BKP_PASSWORD", "")),
     }
     return Settings(
-        config_path=Path(os.getenv("OFFEROPS_CONFIG", "config.example.json")),
+        config_path=Path(os.getenv("OFFEROPS_CONFIG", "config.json")),
         state_path=Path(os.getenv("OFFEROPS_STATE", "state/jobs.json")),
         cloudflare_accounts=cloudflare_accounts,
         whm_accounts=whm_accounts,

@@ -8,8 +8,8 @@ For each domain row, OfferOps can:
 
 1. Read the domain and selected profile from CSV.
 2. Create or reuse the Cloudflare zone.
-3. Prepare the nameserver step for manual update in the registrar.
-4. Apply profile-specific DNS records.
+3. Enable Cloudflare Bot Fight Mode on the zone.
+4. Update the registrar nameservers in Orange automatically when browser automation is enabled, or prepare the manual step otherwise.
 5. Create or reuse a cPanel account through WHM.
 6. Create a `support@domain` mailbox.
 7. Pull SPF, DKIM, and DMARC-style deliverability records from cPanel and publish them in Cloudflare.
@@ -22,8 +22,8 @@ For each domain row, OfferOps can:
 
 - `offerops/`: application code, CLI entrypoint, providers, state management, and web dashboard.
 - `data/domains.csv`: sample input file for domain imports.
-- `config.example.json`: example profile and DNS configuration.
-- `.env.example`: example environment variables for tokens and account credentials.
+- `config.example.json`: public configuration template you copy to `config.json`.
+- `.env.example`: public environment template you copy to `.env`.
 - `tests/`: unit tests.
 
 ## Quick Start
@@ -36,6 +36,8 @@ py -m venv .venv
 pip install -e .
 ```
 
+If you want Orange automation, make sure Chrome or Chromium is installed locally so Selenium can launch a browser session.
+
 Create your local environment file:
 
 ```powershell
@@ -43,13 +45,22 @@ Copy-Item .env.example .env
 notepad .env
 ```
 
-Then review `config.example.json` and update profile values such as:
+Create your local config file:
+
+```powershell
+Copy-Item config.example.json config.json
+notepad config.json
+```
+
+Then review `config.json` and update profile values such as:
 
 - server IPs
 - document-root template
 - cron command template
 - DNS record sets
 - profile names and mappings
+
+Cloudflare nameservers are resolved dynamically from the live zone during runtime. They are no longer stored in `config.json`.
 
 Run a dry run first:
 
@@ -61,6 +72,18 @@ Run the actual provisioning after secrets are configured:
 
 ```powershell
 python -m offerops.cli run --csv data/domains.csv
+```
+
+To let the run search all configured Orange accounts and replace nameservers automatically:
+
+```powershell
+python -m offerops.cli run --csv data/domains.csv --orange-browser
+```
+
+To test only the Orange nameserver step for one domain and one profile:
+
+```powershell
+python -m offerops.cli orange-ns --domain example.com --profile sweeps-live
 ```
 
 Start the local dashboard:
@@ -77,13 +100,13 @@ The CSV should include these columns:
 
 ```csv
 domain,profile,offer_path,notes
-example-offer.com,ecom-live,https://www.example-offer.com/v1/msrack,
-example-sweeps.com,sweeps-live,https://www.example-sweeps.com/v1/msrack,
+harborcartmarket.test,ecom-live,https://www.harborcartmarket.test/v1/msrack,
+brightbuyexchange.test,sweeps-live,https://www.brightbuyexchange.test/v1/msrack,
 ```
 
 Notes:
 
-- `profile` must match a profile key in `config.example.json`.
+- `profile` must match a profile key in `config.json`.
 - `offer_path` can be a full URL or a path like `v1/msrack`.
 - The cron template uses the normalized offer path during provisioning.
 
@@ -95,6 +118,8 @@ The included sample configuration shows four profile shapes:
 - `ecom-bkp`
 - `sweeps-live`
 - `sweeps-bkp`
+- `sweeps-live-2`
+- `sweeps-bkp-2`
 
 Profiles control which Cloudflare account, WHM account, DNS record template, and cron settings get used. Placeholder values such as `{domain}` and `{offer_path}` are expanded at runtime.
 
@@ -106,6 +131,7 @@ Key groups used by the app:
 
 - Cloudflare settings: `CLOUDFLARE_SWEEPS_API_TOKEN`, `CLOUDFLARE_SWEEPS_ACCOUNT_ID`, `CLOUDFLARE_ECOM_API_TOKEN`, `CLOUDFLARE_ECOM_ACCOUNT_ID`
 - WHM settings: base URL, username, API token, package, and contact email for each live/backup environment
+- Orange settings: `ORANGE_LOGIN_URL`, `ORANGE_HEADLESS`, and each Orange username/password pair
 - Local paths: `OFFEROPS_CONFIG` and `OFFEROPS_STATE`
 
 Use WHM API tokens with only the permissions you need, such as `create-acct`, `list-accts`, and `cpanel-api`.
@@ -115,7 +141,8 @@ Use WHM API tokens with only the permissions you need, such as `create-acct`, `l
 This repository is set up so these local-only files stay out of Git:
 
 - `.env` and other `.env.*` files except `.env.example`
-- `state/` runtime state and generated credentials
+- `config.json` and other local config overrides
+- `state/` runtime state, including generated files under `state/credentials/`
 - `logs/`
 - `.tmp/`
 - local build artifacts such as `*.egg-info/`, `build/`, and `dist/`
@@ -123,10 +150,8 @@ This repository is set up so these local-only files stay out of Git:
 Before pushing to GitHub:
 
 1. Double-check that `.env` contains your real secrets and remains untracked.
-2. Keep `.env.example` as the public template with blank tokens.
-3. Review `git status` to confirm no runtime state or credentials are staged.
-
-Important: because your current `.env` contains what look like real WHM details and an API token, rotate that token if it has ever been shared, copied, or committed anywhere else before today, May 9, 2026.
+2. Keep `.env.example` and `config.example.json` as the public templates with placeholder values only.
+3. Review `git status` to confirm no runtime state, local config, or credentials are staged.
 
 ## Running Tests
 

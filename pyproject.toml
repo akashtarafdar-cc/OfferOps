@@ -5,7 +5,7 @@ description = "Automates offer-site domain, DNS, cPanel, email, file, database, 
 requires-python = ">=3.12"
 authors = [{ name = "OfferOps" }]
 dependencies = [
-  "playwright>=1.44.0"
+  "selenium>=4.21.0"
 ]
 
 [project.scripts]
