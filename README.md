@@ -8,6 +8,8 @@ OfferOps is a Python CLI and web dashboard that automates offer-site infrastruct
 
 ## Dashboard Preview
 
+A modern operations dashboard with Light, Dark, and System theme support for provisioning infrastructure, monitoring deployment progress, and reviewing historical runs from a single interface.
+
 ### OfferOps Control Room
 
 ![OfferOps Control Room](screenshots/Offerops_dashboard_1.png)
