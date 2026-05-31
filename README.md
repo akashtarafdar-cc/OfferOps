@@ -1,109 +1,205 @@
 # OfferOps
 
-OfferOps is a Python CLI for provisioning offer-site infrastructure from a CSV import. It wires together Cloudflare and WHM/cPanel so you can stand up domains with repeatable profiles instead of doing the same setup by hand every day.
+> Provision domains, DNS, hosting, email, databases, and cron jobs from a single interface.
 
-## What It Does
+OfferOps is a Python CLI and web dashboard that automates offer-site infrastructure provisioning through Cloudflare and WHM/cPanel. Instead of manually configuring every domain, operators can deploy complete site infrastructure using reusable deployment profiles and a guided dashboard workflow.
 
-For each domain row, OfferOps can:
+---
 
-1. Read the domain and selected profile from CSV.
-2. Create or reuse the Cloudflare zone.
-3. Update the registrar nameservers in Orange automatically when browser automation is enabled, or prepare the manual step otherwise.
-4. Create or reuse a cPanel account through WHM.
-5. Create a `support@domain` mailbox.
-6. Pull SPF, DKIM, and DMARC-style deliverability records from cPanel and publish them in Cloudflare.
-7. Upload starter files such as `robots.txt` and `info.php`.
-8. Create a MySQL database, user, and grants.
-9. Register the offer cron job.
-10. Save run state locally for auditing and retries.
+## Dashboard Preview
 
-## Project Layout
+### OfferOps Control Room
 
-- `offerops/`: application code, CLI entrypoint, providers, state management, and web dashboard.
-- `data/domains.csv`: sample input file for domain imports.
-- `config.example.json`: public configuration template you copy to `config.json`.
-- `.env.example`: public environment template you copy to `.env`.
-- `tests/`: unit tests.
+![OfferOps Control Room](screenshots/Offerops_dashboard_1.png)
+
+### Provisioning Workflow
+
+![OfferOps Provisioning Workflow](screenshots/Offerops_dashboard_2.png)
+
+The dashboard enables operators to:
+
+* Provision one or many domains at once
+* Select deployment stacks and server targets
+* Configure offer paths without editing CSV files
+* Monitor infrastructure tasks in real time
+* Review historical provisioning runs
+* Surface only the credentials required after deployment
+
+---
+
+## Why OfferOps?
+
+Provisioning offer infrastructure often requires repetitive work across multiple systems:
+
+* Cloudflare
+* WHM/cPanel
+* Domain registrars
+* DNS management
+* Email configuration
+* Database creation
+* Cron scheduling
+
+OfferOps standardizes the entire process into a repeatable workflow that reduces manual effort and deployment mistakes.
+
+---
+
+## Features
+
+### Cloudflare Automation
+
+* Create or reuse Cloudflare zones
+* Publish SPF, DKIM, and DMARC records
+* Enable Bot Fight Mode
+* Manage DNS records from predefined templates
+
+### Hosting Automation
+
+* Create or reuse cPanel accounts
+* Create support mailboxes
+* Upload starter application files
+* Configure document roots
+
+### Database Provisioning
+
+* Create MySQL databases
+* Create database users
+* Assign permissions automatically
+
+### Registrar Integration
+
+* Update nameservers automatically through Orange browser automation
+* Support manual registrar workflows when automation is disabled
+
+### Operations Dashboard
+
+* Launch deployments without editing CSV files
+* Live provisioning status updates
+* Historical run tracking
+* Local state persistence for auditing and retries
+
+---
+
+## What Happens During Provisioning?
+
+For every domain submitted, OfferOps can:
+
+1. Create or reuse the Cloudflare zone
+2. Configure nameservers
+3. Create or reuse the cPanel account
+4. Create the support mailbox
+5. Publish deliverability records
+6. Upload starter files
+7. Create the database and user
+8. Register cron jobs
+9. Save deployment state and results
+
+---
 
 ## Quick Start
 
-Create a virtual environment and install the package:
+### Clone the Repository
+
+```powershell
+git clone <repository-url>
+cd offerops
+```
+
+### Create a Virtual Environment
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
+```
+
+### Install Dependencies
+
+```powershell
 pip install -e .
 ```
 
-If you want Orange automation, make sure Chrome or Chromium is installed locally so Selenium can launch a browser session.
+---
+
+## Configuration
 
 Create your local environment file:
 
 ```powershell
 Copy-Item .env.example .env
-notepad .env
 ```
 
-Create your local config file:
+Create your local configuration file:
 
 ```powershell
 Copy-Item config.example.json config.json
-notepad config.json
 ```
 
-Then review `config.json` and update profile values such as:
+Update the following values:
 
-- server IPs
-- document-root template
-- cron command template
-- DNS record sets
-- profile names and mappings
+* Cloudflare credentials
+* WHM credentials
+* Orange registrar credentials
+* Server mappings
+* DNS templates
+* Cron templates
+* Deployment profiles
 
-Cloudflare nameservers are resolved dynamically from the live zone during runtime. They are no longer stored in `config.json`.
+> Never commit `.env` or `config.json` files containing real credentials.
 
-Run a dry run first:
+---
 
-```powershell
-python -m offerops.cli run --csv data/domains.csv --dry-run
-```
+## Running the Dashboard
 
-Run the actual provisioning after secrets are configured:
-
-```powershell
-python -m offerops.cli run --csv data/domains.csv
-```
-
-To let the run search all configured Orange accounts and replace nameservers automatically:
-
-```powershell
-python -m offerops.cli run --csv data/domains.csv --orange-browser
-```
-
-To test only the Orange nameserver step for one domain and one profile:
-
-```powershell
-python -m offerops.cli orange-ns --domain example.com --profile sweeps-live
-```
-
-Start the local dashboard:
+Start the web interface:
 
 ```powershell
 python -m offerops.cli web --port 8787
 ```
 
-Open `http://127.0.0.1:8787` in your browser.
+Open:
 
-The dashboard now supports direct provisioning without editing the CSV first:
+```text
+http://127.0.0.1:8787
+```
 
-- paste one or more domains
-- choose the stack and server from dropdowns
-- enter the offer slug
-- watch live step-by-step progress
-- copy only the final credentials that matter
+---
 
-## CSV Format
+## Running a Dry Run
 
-The CSV should include these columns:
+Validate provisioning without making changes:
+
+```powershell
+python -m offerops.cli run --csv data/domains.csv --dry-run
+```
+
+---
+
+## Running Provisioning
+
+Execute a deployment:
+
+```powershell
+python -m offerops.cli run --csv data/domains.csv
+```
+
+---
+
+## Orange Nameserver Automation
+
+Run provisioning with automatic registrar updates:
+
+```powershell
+python -m offerops.cli run --csv data/domains.csv --orange-browser
+```
+
+Test only the registrar automation:
+
+```powershell
+python -m offerops.cli orange-ns --domain example.com --profile sweeps-live
+```
+
+---
+
+## CSV Import Format
 
 ```csv
 domain,profile,offer_path,notes
@@ -111,57 +207,109 @@ harborcartmarket.test,ecom-live,https://www.harborcartmarket.test/v1/msrack,
 brightbuyexchange.test,sweeps-live,https://www.brightbuyexchange.test/v1/msrack,
 ```
 
-Notes:
+### Fields
 
-- `profile` must match a profile key in `config.json`.
-- `offer_path` can be a full URL or a path like `v1/msrack`.
-- The cron template uses the normalized offer path during provisioning.
+| Field      | Description         |
+| ---------- | ------------------- |
+| domain     | Domain to provision |
+| profile    | Deployment profile  |
+| offer_path | Offer URL or path   |
+| notes      | Optional metadata   |
+
+---
 
 ## Profiles
 
-The included sample configuration shows four profile shapes:
+OfferOps supports multiple deployment profiles.
 
-- `ecom-live`
-- `ecom-bkp`
-- `sweeps-live`
-- `sweeps-bkp`
-- `sweeps-live-2`
-- `sweeps-bkp-2`
+Example profile types:
 
-Profiles control which Cloudflare account, WHM account, DNS record template, and cron settings get used. Placeholder values such as `{domain}` and `{offer_path}` are expanded at runtime.
+* ecom-live
+* ecom-bkp
+* sweeps-live
+* sweeps-bkp
+* sweeps-live-2
+* sweeps-bkp-2
+
+Profiles determine:
+
+* Cloudflare account
+* WHM target
+* DNS templates
+* Cron templates
+* Hosting configuration
+
+---
 
 ## Environment Variables
 
-Keep real credentials only in `.env`, never in tracked files.
+### Cloudflare
 
-Key groups used by the app:
+```text
+CLOUDFLARE_SWEEPS_API_TOKEN
+CLOUDFLARE_SWEEPS_ACCOUNT_ID
+CLOUDFLARE_ECOM_API_TOKEN
+CLOUDFLARE_ECOM_ACCOUNT_ID
+```
 
-- Cloudflare settings: `CLOUDFLARE_SWEEPS_API_TOKEN`, `CLOUDFLARE_SWEEPS_ACCOUNT_ID`, `CLOUDFLARE_ECOM_API_TOKEN`, `CLOUDFLARE_ECOM_ACCOUNT_ID`
-- WHM settings: base URL, username, API token, package, and contact email for each live/backup environment
-- Orange settings: `ORANGE_LOGIN_URL`, `ORANGE_HEADLESS`, and each Orange username/password pair
-- Local paths: `OFFEROPS_CONFIG` and `OFFEROPS_STATE`
+### WHM
 
-Use WHM API tokens with only the permissions you need, such as `create-acct`, `list-accts`, and `cpanel-api`.
+```text
+WHM_URL
+WHM_USERNAME
+WHM_API_TOKEN
+```
 
-## Safe GitHub Publishing
+### Orange
 
-This repository is set up so these local-only files stay out of Git:
+```text
+ORANGE_LOGIN_URL
+ORANGE_HEADLESS
+ORANGE_USERNAME
+ORANGE_PASSWORD
+```
 
-- `.env` and other `.env.*` files except `.env.example`
-- `config.json` and other local config overrides
-- `state/` runtime state, including generated files under `state/credentials/`
-- `logs/`
-- `.tmp/`
-- local build artifacts such as `*.egg-info/`, `build/`, and `dist/`
+---
 
-Before pushing to GitHub:
+## Security
 
-1. Double-check that `.env` contains your real secrets and remains untracked.
-2. Keep `.env.example` and `config.example.json` as the public templates with placeholder values only.
-3. Review `git status` to confirm no runtime state, local config, or credentials are staged.
+OfferOps is designed so sensitive information remains outside source control.
+
+Ignored by Git:
+
+```text
+.env
+.env.*
+config.json
+logs/
+state/
+.tmp/
+dist/
+build/
+*.egg-info/
+```
+
+Before pushing:
+
+* Verify no credentials are staged
+* Verify runtime state is excluded
+* Use least-privilege API tokens
+* Rotate exposed credentials immediately
+
+---
 
 ## Running Tests
 
 ```powershell
 python -m unittest discover -s tests -p "test_*.py"
 ```
+
+---
+
+## License
+
+Internal tooling project. Use according to your organization's policies.
+
+---
+
+Built with Python, Cloudflare, WHM/cPanel, Selenium, and a lot less repetitive clicking.
