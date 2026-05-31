@@ -8,15 +8,14 @@ For each domain row, OfferOps can:
 
 1. Read the domain and selected profile from CSV.
 2. Create or reuse the Cloudflare zone.
-3. Enable Cloudflare Bot Fight Mode on the zone.
-4. Update the registrar nameservers in Orange automatically when browser automation is enabled, or prepare the manual step otherwise.
-5. Create or reuse a cPanel account through WHM.
-6. Create a `support@domain` mailbox.
-7. Pull SPF, DKIM, and DMARC-style deliverability records from cPanel and publish them in Cloudflare.
-8. Upload starter files such as `robots.txt` and `info.php`.
-9. Create a MySQL database, user, and grants.
-10. Register the offer cron job.
-11. Save run state locally for auditing and retries.
+3. Update the registrar nameservers in Orange automatically when browser automation is enabled, or prepare the manual step otherwise.
+4. Create or reuse a cPanel account through WHM.
+5. Create a `support@domain` mailbox.
+6. Pull SPF, DKIM, and DMARC-style deliverability records from cPanel and publish them in Cloudflare.
+7. Upload starter files such as `robots.txt` and `info.php`.
+8. Create a MySQL database, user, and grants.
+9. Register the offer cron job.
+10. Save run state locally for auditing and retries.
 
 ## Project Layout
 
@@ -93,6 +92,14 @@ python -m offerops.cli web --port 8787
 ```
 
 Open `http://127.0.0.1:8787` in your browser.
+
+The dashboard now supports direct provisioning without editing the CSV first:
+
+- paste one or more domains
+- choose the stack and server from dropdowns
+- enter the offer slug
+- watch live step-by-step progress
+- copy only the final credentials that matter
 
 ## CSV Format
 

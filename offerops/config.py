@@ -36,6 +36,53 @@ class AppConfig:
             raise KeyError(f"Unknown profile '{name}'. Add it under profiles in config.")
         return dict(profiles[canonical_name])
 
+    def profile_names(self) -> list[str]:
+        return list(self.raw.get("profiles", {}).keys())
+
+    def profile_summaries(self) -> list[dict[str, Any]]:
+        summaries: list[dict[str, Any]] = []
+        for name in self.profile_names():
+            profile = self.profile(name)
+            summaries.append(
+                {
+                    "name": name,
+                    "kind": str(profile.get("kind", "")),
+                    "servers": [str(item) for item in profile.get("servers", [])],
+                    "cloudflare_account": str(profile.get("cloudflare_account", "")),
+                    "whm_account": str(profile.get("whm_account", "")),
+                }
+            )
+        return summaries
+
+    def server_choices_for_kind(self, kind: str) -> list[str]:
+        canonical_kind = str(kind).strip().lower()
+        servers: list[str] = []
+        for summary in self.profile_summaries():
+            if summary["kind"] != canonical_kind:
+                continue
+            for server in summary["servers"]:
+                if server not in servers:
+                    servers.append(server)
+        return servers
+
+    def resolve_profile_for_kind_server(self, kind: str, server: str) -> str:
+        canonical_kind = str(kind).strip().lower()
+        canonical_server = self.canonical_profile_name(server).replace(" ", "-")
+        matches = [
+            summary["name"]
+            for summary in self.profile_summaries()
+            if summary["kind"] == canonical_kind
+            and canonical_server in [self.canonical_profile_name(item).replace(" ", "-") for item in summary["servers"]]
+        ]
+        if not matches:
+            raise KeyError(f"No profile matches kind '{kind}' and server '{server}'.")
+        if len(matches) > 1:
+            exact_name = self.canonical_profile_name(f"{canonical_kind}-{canonical_server}")
+            for match in matches:
+                if self.canonical_profile_name(match) == exact_name:
+                    return match
+        return matches[0]
+
     @staticmethod
     def canonical_profile_name(name: str) -> str:
         return "-".join(str(name).strip().lower().replace("_", " ").split())

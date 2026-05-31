@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import Callable
 
 from .config import AppConfig, Settings
 from .http import HttpError
@@ -8,30 +9,40 @@ from .models import DnsRecord, DomainJob, JobResult, StepResult, StepStatus
 from .providers.cloudflare import CloudflareClient
 from .providers.orange_browser import OrangeAccount, OrangeBrowserClient
 from .providers.whm import WhmClient
-from .state import StateStore, step_from_exception
+from .state import StateStore, serialize_result, step_from_exception
 
 
 class OfferProvisioner:
-    def __init__(self, settings: Settings, config: AppConfig, state: StateStore, dry_run: bool = False, use_orange_browser: bool = False) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        config: AppConfig,
+        state: StateStore,
+        dry_run: bool = False,
+        use_orange_browser: bool = False,
+        progress_callback: Callable[[dict[str, object]], None] | None = None,
+    ) -> None:
         self.settings = settings
         self.config = config
         self.state = state
         self.dry_run = dry_run
         self.use_orange_browser = use_orange_browser
+        self.progress_callback = progress_callback
 
     def run(self, job: DomainJob) -> JobResult:
-        result = JobResult(domain=job.domain, profile=job.profile, status=StepStatus.DONE)
+        result = JobResult(domain=job.domain, profile=job.profile, status=StepStatus.RUNNING)
+        self._publish(result)
         try:
             profile = self.config.profile(job.profile)
         except Exception as exc:
             result.add(step_from_exception("load-profile", exc))
-            self.state.save_result(result)
+            self._publish(result)
             return result
 
         offer_path = job.resolved_offer_path()
         if not offer_path:
             result.add(StepResult(name="offer-path", status=StepStatus.FAILED, message="CSV row must include offer_path, offer_url, or offer with a path like v1/msrack."))
-            self.state.save_result(result)
+            self._publish(result)
             return result
 
         zone_id = ""
@@ -69,6 +80,7 @@ class OfferProvisioner:
         ]
 
         for name, action in steps:
+            self._update_step(result, StepResult(name=name, status=StepStatus.RUNNING, message=self._step_message(name)))
             try:
                 data = action()
                 if name == "cloudflare-zone":
@@ -79,10 +91,11 @@ class OfferProvisioner:
                     account_existed = bool(data.existed)
                 if name == "database" and isinstance(data, dict):
                     database_info = data
-                result.add(StepResult(name=name, status=StepStatus.DONE, data=self._safe_data(data)))
+                self._update_step(result, StepResult(name=name, status=StepStatus.DONE, message=self._step_message(name), data=self._safe_data(data)))
             except Exception as exc:
                 if name == "cloudflare-bot-fight-mode" and self._should_skip_bot_fight_mode(exc):
-                    result.add(
+                    self._update_step(
+                        result,
                         StepResult(
                             name=name,
                             status=StepStatus.SKIPPED,
@@ -90,13 +103,32 @@ class OfferProvisioner:
                         )
                     )
                     continue
-                result.add(step_from_exception(name, exc))
+                self._update_step(result, step_from_exception(name, exc))
                 break
 
-        result.add(
+        result.credentials = (
+            {
+                "domain": job.domain,
+                "cpanel_username": cpanel_username,
+                "cpanel_account_password": "" if account_existed else account_password,
+                "cpanel_account_password_note": "Not shown because the cPanel account already existed."
+                if account_existed
+                else "Shown because this run created the cPanel account.",
+                "support_email": support_email,
+                "support_email_password": mail_password,
+                "database_name": str(database_info.get("database", "")),
+                "database_user": str(database_info.get("user", "")),
+                "database_user_password": db_password,
+                "nameservers": nameservers,
+            }
+            if result.status != StepStatus.FAILED
+            else {}
+        )
+        self._update_step(
+            result,
             StepResult(
                 name="secrets",
-                status=StepStatus.DONE if result.status == StepStatus.DONE else StepStatus.SKIPPED,
+                status=StepStatus.DONE if result.status != StepStatus.FAILED else StepStatus.SKIPPED,
                 message="Generated credentials were saved to a local file.",
                 data={
                     "credentials_file": str(
@@ -130,11 +162,13 @@ class OfferProvisioner:
                     "document_root": document_root,
                     "nameservers": nameservers,
                 }
-                if result.status == StepStatus.DONE
+                if result.status != StepStatus.FAILED
                 else {},
             )
         )
-        self.state.save_result(result)
+        if result.status != StepStatus.FAILED:
+            result.status = StepStatus.DONE
+        self._publish(result)
         return result
 
     def run_orange_nameserver_update(self, domain: str, profile_name: str) -> dict[str, object]:
@@ -206,6 +240,32 @@ class OfferProvisioner:
     def _resolve_nameservers(self, domain: str, profile_name: str) -> list[str]:
         zone = self._cloudflare_for(profile_name).ensure_zone(domain, self.config.defaults.get("cloudflare_plan", "free"))
         return self._preferred_nameservers(zone)
+
+    def _publish(self, result: JobResult) -> None:
+        self.state.save_result(result)
+        if self.progress_callback is not None:
+            self.progress_callback(serialize_result(result, include_credentials=True))
+
+    def _update_step(self, result: JobResult, step: StepResult) -> None:
+        result.add(step)
+        self._publish(result)
+
+    @staticmethod
+    def _step_message(name: str) -> str:
+        messages = {
+            "cloudflare-zone": "Creating or reusing the Cloudflare zone.",
+            "cloudflare-bot-fight-mode": "Applying Cloudflare Bot Fight Mode.",
+            "orange-nameservers": "Updating nameservers in Orange.",
+            "cloudflare-dns": "Publishing DNS records to Cloudflare.",
+            "whm-account": "Creating or reusing the WHM/cPanel account.",
+            "cpanel-support-email": "Creating the support mailbox.",
+            "email-deliverability": "Publishing SPF, DKIM, and DMARC records.",
+            "files": "Uploading starter files.",
+            "database": "Creating the database and user.",
+            "cron": "Registering the cron job.",
+            "secrets": "Saving the generated credentials.",
+        }
+        return messages.get(name, name)
 
     @staticmethod
     def _preferred_nameservers(zone_data: object) -> list[str]:

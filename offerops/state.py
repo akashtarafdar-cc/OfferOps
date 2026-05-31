@@ -26,15 +26,7 @@ class StateStore:
 
     def save_result(self, result: JobResult) -> None:
         data = self.read()
-        data.setdefault("jobs", {})[result.domain] = {
-            "domain": result.domain,
-            "profile": result.profile,
-            "status": result.status.value,
-            "steps": [
-                {"name": step.name, "status": step.status.value, "message": step.message, "data": step.data}
-                for step in result.steps
-            ],
-        }
+        data.setdefault("jobs", {})[result.domain] = serialize_result(result)
         self.write(data)
 
     def save_credentials(self, domain: str, data: dict[str, Any]) -> Path:
@@ -53,3 +45,18 @@ class StateStore:
 
 def step_from_exception(name: str, exc: Exception) -> StepResult:
     return StepResult(name=name, status=StepStatus.FAILED, message=str(exc))
+
+
+def serialize_result(result: JobResult, include_credentials: bool = False) -> dict[str, Any]:
+    payload = {
+        "domain": result.domain,
+        "profile": result.profile,
+        "status": result.status.value,
+        "steps": [
+            {"name": step.name, "status": step.status.value, "message": step.message, "data": step.data}
+            for step in result.steps
+        ],
+    }
+    if include_credentials and result.credentials:
+        payload["credentials"] = dict(result.credentials)
+    return payload

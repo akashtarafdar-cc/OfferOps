@@ -75,8 +75,18 @@ class JobResult:
     profile: str
     status: StepStatus
     steps: list[StepResult] = field(default_factory=list)
+    credentials: dict[str, Any] = field(default_factory=dict)
 
     def add(self, result: StepResult) -> None:
-        self.steps.append(result)
+        self.upsert(result)
         if result.status == StepStatus.FAILED:
             self.status = StepStatus.FAILED
+        elif result.status == StepStatus.RUNNING and self.status != StepStatus.FAILED:
+            self.status = StepStatus.RUNNING
+
+    def upsert(self, result: StepResult) -> None:
+        for index, existing in enumerate(self.steps):
+            if existing.name == result.name:
+                self.steps[index] = result
+                return
+        self.steps.append(result)

@@ -3,12 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any
 
 from .config import load_app_config, load_settings
 from .importer import load_jobs
 from .runner import OfferProvisioner
-from .state import StateStore
+from .state import StateStore, serialize_result
 from .web import serve
 
 
@@ -40,7 +39,7 @@ def main() -> None:
     if args.command == "run":
         provisioner = OfferProvisioner(settings, config, state, dry_run=args.dry_run, use_orange_browser=args.orange_browser)
         for job in load_jobs(Path(args.csv)):
-            print(json.dumps(_result_to_dict(provisioner.run(job)), indent=2))
+            print(json.dumps(serialize_result(provisioner.run(job)), indent=2))
     elif args.command == "orange-ns":
         provisioner = OfferProvisioner(settings, config, state, dry_run=args.dry_run, use_orange_browser=True)
         result = provisioner.run_orange_nameserver_update(args.domain, args.profile)
@@ -49,18 +48,6 @@ def main() -> None:
         print(json.dumps(state.read(), indent=2))
     elif args.command == "web":
         serve(args.host, args.port, settings, config, state)
-
-
-def _result_to_dict(result: Any) -> dict[str, Any]:
-    return {
-        "domain": result.domain,
-        "profile": result.profile,
-        "status": result.status.value,
-        "steps": [
-            {"name": step.name, "status": step.status.value, "message": step.message, "data": step.data}
-            for step in result.steps
-        ],
-    }
 
 
 if __name__ == "__main__":

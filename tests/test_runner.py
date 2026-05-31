@@ -4,9 +4,9 @@ from pathlib import Path
 
 from offerops.config import Settings, load_app_config
 from offerops.http import HttpError, HttpResponse
-from offerops.models import DomainJob, StepStatus
+from offerops.models import DomainJob, JobResult, StepStatus
 from offerops.runner import OfferProvisioner
-from offerops.state import StateStore
+from offerops.state import StateStore, serialize_result
 
 
 class RunnerTests(unittest.TestCase):
@@ -58,6 +58,16 @@ class RunnerTests(unittest.TestCase):
     def test_preferred_nameservers_requires_live_zone_values(self) -> None:
         with self.assertRaisesRegex(ValueError, "did not return zone nameservers"):
             OfferProvisioner._preferred_nameservers({"id": "zone"})
+
+    def test_credentials_are_available_in_memory_but_not_saved_state_payload(self) -> None:
+        job_result = JobResult(domain="credsvisible.test", profile="sweeps-live", status=StepStatus.DONE)
+        job_result.credentials = {"support_email_password": "secret"}
+        public_payload = serialize_result(job_result)
+        private_payload = serialize_result(job_result, include_credentials=True)
+
+        self.assertNotIn("credentials", public_payload)
+        self.assertIn("credentials", private_payload)
+        self.assertIn("support_email_password", private_payload["credentials"])
 
 
 if __name__ == "__main__":

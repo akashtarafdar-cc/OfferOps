@@ -114,6 +114,17 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.whm_account_for("sweeps live 2"), "sweeps_live_2")
         self.assertEqual(config.whm_account_for("sweeps bkp 2"), "sweeps_bkp_2")
 
+    def test_server_choices_are_grouped_by_kind(self) -> None:
+        config = load_app_config(Path("config.json"))
+        self.assertEqual(config.server_choices_for_kind("ecom"), ["live", "bkp"])
+        self.assertEqual(config.server_choices_for_kind("sweeps"), ["live", "live-2", "bkp", "bkp-2"])
+
+    def test_kind_and_server_resolve_to_profile(self) -> None:
+        config = load_app_config(Path("config.json"))
+        self.assertEqual(config.resolve_profile_for_kind_server("ecom", "live"), "ecom-live")
+        self.assertEqual(config.resolve_profile_for_kind_server("sweeps", "live-2"), "sweeps-live-2")
+        self.assertEqual(config.resolve_profile_for_kind_server("sweeps", "bkp 2"), "sweeps-bkp-2")
+
     def test_orange_accounts_are_scoped_by_profile_group(self) -> None:
         config = load_app_config(Path("config.json"))
         self.assertEqual(
