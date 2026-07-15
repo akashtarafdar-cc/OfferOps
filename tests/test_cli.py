@@ -50,7 +50,7 @@ class CliTests(unittest.TestCase):
         update_mock.assert_called_once_with("example.com", ["ns1.example.com", "ns2.example.com"])
         self.assertIn('"ok": true', buffer.getvalue().lower())
 
-    def test_orange_ns_uses_only_matching_orange_accounts_for_profile(self) -> None:
+    def test_orange_ns_prefers_matching_orange_accounts_before_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             config_path = root / "config.json"
@@ -80,15 +80,27 @@ class CliTests(unittest.TestCase):
                 "ORANGE_SWEEPS_LIVE_USERNAME": "sweeps-user",
                 "ORANGE_SWEEPS_LIVE_PASSWORD": "sweeps-pass",
             }
-            with patch.dict("os.environ", env, clear=False):
+            with patch.dict("os.environ", env, clear=True):
                 settings = load_settings()
+                settings.orange_accounts.clear()
+                settings.orange_accounts.update(
+                    {
+                        "sweeps_live": ("sweeps-user", "sweeps-pass"),
+                        "sweeps_bkp": ("", ""),
+                        "sweeps_live_2": ("", ""),
+                        "sweeps_bkp_2": ("", ""),
+                        "sweeps_live_3": ("", ""),
+                        "ecom_live": ("ecom-user", "ecom-pass"),
+                        "ecom_bkp": ("ecom-bkp-user", "ecom-bkp-pass"),
+                    }
+                )
                 config = load_app_config(config_path)
                 provisioner = OfferProvisioner(settings, config, state=None, dry_run=True, use_orange_browser=True)  # type: ignore[arg-type]
 
                 with patch("offerops.runner.CloudflareClient.ensure_zone", return_value={"id": "zone", "name_servers": ["ns1.ecom.example.com", "ns2.ecom.example.com"]}):
                     result = provisioner.run_orange_nameserver_update("example.com", "ecom-live")
 
-        self.assertEqual(result["searched_accounts"], ["ecom_live", "ecom_bkp"])
+        self.assertEqual(result["searched_accounts"], ["ecom_live", "ecom_bkp", "sweeps_live"])
 
 
 if __name__ == "__main__":

@@ -20,6 +20,10 @@ class OrangeBrowserClient:
     """Selenium-based browser automation for Orange nameserver updates."""
 
     DOMAINS_PATH = "/clientarea.php?action=domains"
+    CONNECTION_RESET_HINT = (
+        "Orange reset the browser connection while loading the page. "
+        "Try again in a moment, verify the Orange login URL, or update the nameservers manually."
+    )
 
     SELECTORS: dict[str, list[tuple[str, str]]] = {
         "username": [
@@ -156,6 +160,10 @@ class OrangeBrowserClient:
                     "matched_account": account.name,
                     "nameservers": nameservers,
                 }
+            except Exception as exc:
+                if self._is_connection_reset_error(exc):
+                    raise OrangeAutomationNotConfigured(self.CONNECTION_RESET_HINT) from exc
+                raise
             finally:
                 driver.quit()
         raise OrangeAutomationNotConfigured(f"Domain '{domain}' was not found in Orange accounts: {', '.join(attempted)}")
@@ -558,3 +566,15 @@ class OrangeBrowserClient:
         domains_url = f"{base_url}{self.DOMAINS_PATH}"
         driver.get(domains_url)
         self._wait_for_ready_state(driver)
+
+    @staticmethod
+    def _is_connection_reset_error(exc: Exception) -> bool:
+        current: Exception | None = exc
+        seen: set[int] = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            text = str(current).lower()
+            if "net::err_connection_reset" in text or "err_connection_reset" in text or "connection reset" in text:
+                return True
+            current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+        return False

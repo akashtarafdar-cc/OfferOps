@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
+import sys
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from .config import AppConfig, Settings
 from .models import DomainJob, StepStatus
@@ -20,7 +25,7 @@ INDEX = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OfferOps Control Room</title>
+  <title>OfferOps Dashboard</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -44,7 +49,6 @@ INDEX = """<!doctype html>
       --input-bg: rgba(255,255,255,0.88);
       --panel-bg: rgba(244, 239, 230, 0.78);
       --hero-text: rgba(241, 247, 255, 0.84);
-      --hero-chip: rgba(255,255,255,0.1);
       font-family: "Segoe UI", "Aptos", ui-sans-serif, sans-serif;
     }
     body[data-theme="dark"] {
@@ -65,9 +69,21 @@ INDEX = """<!doctype html>
       --input-bg: rgba(10, 18, 30, 0.84);
       --panel-bg: rgba(18, 29, 46, 0.82);
       --hero-text: rgba(220, 234, 255, 0.84);
-      --hero-chip: rgba(255,255,255,0.06);
     }
     * { box-sizing: border-box; }
+    html, body, .run-body, .history, .modal-card {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    html::-webkit-scrollbar,
+    body::-webkit-scrollbar,
+    .run-body::-webkit-scrollbar,
+    .history::-webkit-scrollbar,
+    .modal-card::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+      display: none;
+    }
     body {
       margin: 0;
       color: var(--ink);
@@ -105,19 +121,6 @@ INDEX = """<!doctype html>
       transform: rotate(-10deg);
       pointer-events: none;
     }
-    .eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 12px;
-      border-radius: 999px;
-      background: var(--hero-chip);
-      border: 1px solid rgba(255,255,255,0.18);
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.14em;
-      backdrop-filter: blur(14px);
-    }
     h1 {
       margin: 18px 0 10px;
       font-size: clamp(2rem, 4vw, 3.6rem);
@@ -132,39 +135,18 @@ INDEX = """<!doctype html>
       font-size: 1.02rem;
       line-height: 1.6;
     }
-    .hero-topbar {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: flex-start;
-      flex-wrap: wrap;
-    }
-    .hero-stats {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 14px;
-      margin-top: 24px;
-      max-width: 720px;
-    }
-    .stat {
-      padding: 14px 16px;
-      border-radius: 18px;
-      background: rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.12);
-      backdrop-filter: blur(16px);
-      animation: fadeUp 0.7s ease both;
-    }
-    .stat strong {
-      display: block;
-      font-size: 1.35rem;
-      margin-bottom: 4px;
-    }
     .grid {
       display: grid;
       grid-template-columns: 430px minmax(0, 1fr);
       gap: 20px;
       margin-top: 22px;
       align-items: start;
+      min-height: clamp(640px, calc(100vh - 220px), 780px);
+    }
+    .grid > .card,
+    .grid > .split {
+      min-height: 0;
+      height: 100%;
     }
     .card {
       background: var(--card);
@@ -178,6 +160,13 @@ INDEX = """<!doctype html>
     .card:hover { transform: translateY(-2px); }
     .panel {
       padding: 24px;
+      min-height: 0;
+    }
+    .split > .card.panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      height: 100%;
     }
     .panel h2 {
       margin: 0 0 8px;
@@ -230,6 +219,72 @@ INDEX = """<!doctype html>
       font-size: 0.84rem;
       line-height: 1.45;
     }
+    .domain-rows {
+      display: grid;
+      gap: 10px;
+    }
+    .domain-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto auto;
+      gap: 8px;
+      align-items: stretch;
+      animation: fadeUp 0.35s ease both;
+    }
+    .domain-row input {
+      padding: 12px 14px;
+      border-radius: 14px;
+    }
+    .row-button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: var(--glass);
+      color: var(--ink);
+      border-radius: 12px;
+      width: 44px;
+      height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      font-weight: 800;
+      line-height: 1;
+      cursor: pointer;
+      transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+    }
+    .row-button:hover { transform: translateY(-1px); }
+    .row-add {
+      background: linear-gradient(135deg, var(--brand), #16765f);
+      color: white;
+      border-color: transparent;
+      box-shadow: 0 8px 18px rgba(15, 140, 120, 0.14);
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+    }
+    .row-remove {
+      background: linear-gradient(135deg, #ff7b75, #ff4b4b);
+      color: white;
+      border-color: transparent;
+      box-shadow: 0 6px 14px rgba(255,75,75,0.08);
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+    }
+    .row-button:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    body[data-theme="dark"] .row-add {
+      box-shadow: 0 12px 24px rgba(15, 140, 120, 0.28);
+    }
+    @media (max-width: 720px) {
+      .domain-row {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      }
+      .row-button { width: 100%; padding: 10px 0; }
+    }
     .toggle-row {
       display: flex;
       flex-wrap: wrap;
@@ -239,14 +294,69 @@ INDEX = """<!doctype html>
     .toggle {
       display: inline-flex;
       align-items: center;
-      gap: 10px;
-      padding: 10px 12px;
-      border-radius: 14px;
+      gap: 7px;
+      padding: 7px 9px;
+      border-radius: 11px;
       border: 1px solid var(--line);
       background: var(--glass);
-      font-size: 0.92rem;
+      font-size: 0.85rem;
+      line-height: 1.15;
+      width: fit-content;
+      max-width: 100%;
     }
     .toggle input { width: auto; margin: 0; }
+    .toggle input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      min-width: 14px;
+      max-width: 14px;
+      margin: 0 0 0 0;
+      padding: 0;
+      appearance: none;
+      -webkit-appearance: none;
+      flex: 0 0 14px;
+      display: inline-grid;
+      place-items: center;
+      background: rgba(255,255,255,0.9);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+      box-sizing: border-box;
+      vertical-align: middle;
+      cursor: pointer;
+      position: relative;
+    }
+    .toggle input[type="checkbox"]:focus-visible {
+      outline: 2px solid rgba(33, 74, 136, 0.24);
+      outline-offset: 2px;
+    }
+    .toggle input[type="checkbox"]:checked {
+      background: var(--brand);
+      border-color: var(--brand);
+      box-shadow: none;
+    }
+    .toggle input[type="checkbox"]::after {
+      content: "";
+      width: 7px;
+      height: 7px;
+      transform: scale(0);
+      transform-origin: center;
+      background: white;
+      clip-path: polygon(14% 44%, 0 60%, 38% 100%, 100% 18%, 82% 0, 36% 58%);
+      transition: transform 0.16s ease;
+    }
+    .toggle input[type="checkbox"]:checked::after {
+      transform: scale(1);
+    }
+    body[data-theme="dark"] .toggle input[type="checkbox"] {
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(180,207,241,0.18);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+    }
+    body[data-theme="dark"] .toggle input[type="checkbox"]:checked {
+      background: var(--brand);
+      border-color: var(--brand);
+    }
     .cta-row {
       display: flex;
       flex-wrap: wrap;
@@ -296,15 +406,126 @@ INDEX = """<!doctype html>
       display: grid;
       grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
       gap: 18px;
+      align-items: stretch;
+      min-height: 0;
+      height: 100%;
+    }
+    .panel-start,
+    .panel-run,
+    .panel-history {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+    .panel-start #runForm {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .panel-start .cta-row {
+      margin-top: auto;
+      padding-top: 14px;
+    }
+    .panel-run #runMount,
+    .panel-history #history {
+      flex: 1;
+      min-height: 0;
+    }
+    .panel-run #runMount {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .panel-run #runMount > .run-shell {
+      flex: 1 1 0;
+      min-height: 0;
+      height: auto;
+      max-height: none;
     }
     .empty {
-      min-height: 360px;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+      height: 100%;
       display: grid;
       place-items: center;
       text-align: center;
       padding: 26px;
       color: var(--muted);
       animation: fadeIn 0.5s ease both;
+    }
+    .empty::before,
+    .empty::after {
+      content: "";
+      position: absolute;
+      border-radius: 999px;
+      filter: blur(4px);
+      opacity: 0.6;
+      pointer-events: none;
+      animation: driftOrb 12s ease-in-out infinite;
+    }
+    .empty::before {
+      width: 180px;
+      height: 180px;
+      top: -40px;
+      right: -30px;
+      background: radial-gradient(circle, rgba(15, 140, 120, 0.18), transparent 68%);
+    }
+    .empty::after {
+      width: 210px;
+      height: 210px;
+      bottom: -70px;
+      left: -50px;
+      background: radial-gradient(circle, rgba(223, 111, 53, 0.16), transparent 70%);
+      animation-delay: -4s;
+    }
+    .run-shell {
+      position: relative;
+      overflow: hidden;
+      border-radius: 24px;
+      padding: 18px;
+      height: auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.5), rgba(255,255,255,0.12)),
+        rgba(255,255,255,0.18);
+      border: 1px solid rgba(255,255,255,0.56);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.45);
+      animation: fadeUp 0.45s ease both;
+      isolation: isolate;
+    }
+    .run-shell::before,
+    .run-shell::after {
+      content: "";
+      position: absolute;
+      inset: auto;
+      border-radius: 999px;
+      pointer-events: none;
+      z-index: -1;
+    }
+    .run-shell::before {
+      width: 240px;
+      height: 240px;
+      top: -90px;
+      right: -50px;
+      background: radial-gradient(circle, rgba(33, 74, 136, 0.16), transparent 68%);
+      opacity: 0.75;
+    }
+    .run-shell::after {
+      width: 220px;
+      height: 220px;
+      bottom: -100px;
+      left: -30px;
+      background: radial-gradient(circle, rgba(15, 140, 120, 0.14), transparent 72%);
+      opacity: 0.6;
     }
     .run-header {
       display: flex;
@@ -318,39 +539,210 @@ INDEX = """<!doctype html>
       margin: 0;
       font-size: 1.15rem;
     }
+    .run-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      color: var(--brand-3);
+      font-size: 0.76rem;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    .run-kicker::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--brand), #4fd4b0);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.32);
+    }
+    .run-statusline {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.42);
+      border: 1px solid rgba(255,255,255,0.52);
+      backdrop-filter: blur(12px);
+    }
+    .run-status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--brand), #59dcc4);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.3);
+      flex: 0 0 auto;
+    }
+    .run-status-copy {
+      min-width: 0;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.4;
+    }
     .progress-rail {
+      position: relative;
       height: 10px;
       border-radius: 999px;
       background: rgba(33, 74, 136, 0.09);
       overflow: hidden;
       margin: 16px 0 18px;
     }
+    .progress-rail::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.68), transparent);
+      transform: translateX(-100%);
+      animation: progressSweep 2.2s linear infinite;
+      opacity: 0.9;
+    }
     .progress-fill {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, var(--brand), var(--brand-2));
-      transition: width 0.3s ease;
       position: relative;
-      overflow: hidden;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,0.2), rgba(255,255,255,0.02)),
+        linear-gradient(90deg, var(--brand), var(--brand-2), var(--brand-3));
+      background-size: 180% 100%;
+      transition: width 0.3s ease;
+      animation: progressFlow 3.6s linear infinite;
     }
     .progress-fill::after {
       content: "";
       position: absolute;
       inset: 0;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
-      animation: sweep 1.9s linear infinite;
+      background: repeating-linear-gradient(
+        135deg,
+        rgba(255,255,255,0.28) 0 10px,
+        rgba(255,255,255,0.08) 10px 20px
+      );
+      mix-blend-mode: soft-light;
+      opacity: 0.55;
+    }
+    .run-summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 16px 0 4px;
+      align-items: stretch;
+    }
+    .summary-card {
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.9), var(--panel-bg));
+      border: 1px solid rgba(38, 52, 72, 0.08);
+      box-shadow: 0 10px 24px rgba(26, 36, 51, 0.05);
+      min-height: 108px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.24s ease, box-shadow 0.24s ease, border-color 0.24s ease;
+    }
+    .summary-card::after {
+      content: "";
+      position: absolute;
+      inset: auto -35% -55% auto;
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(33, 74, 136, 0.12), transparent 72%);
+      pointer-events: none;
+    }
+    .summary-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 16px 34px rgba(26, 36, 51, 0.08);
+    }
+    .summary-card.running-metric {
+      border-color: rgba(15, 140, 120, 0.24);
+      box-shadow: 0 16px 34px rgba(15, 140, 120, 0.08);
+    }
+    .summary-card.running-metric::before {
+      content: "";
+      position: absolute;
+      top: -20%;
+      bottom: -20%;
+      left: -45%;
+      width: 34%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.62), transparent);
+      transform: skewX(-18deg);
+      animation: sheenDrift 3.8s ease-in-out infinite;
+      opacity: 0.9;
+      pointer-events: none;
+    }
+    .summary-card strong {
+      display: block;
+      font-size: 1.1rem;
+      line-height: 1.15;
+    }
+    .summary-card span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+    .run-body {
+      flex: 1 1 0;
+      min-height: 0;
+      overflow-y: auto;
+      padding-right: 0;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(33, 74, 136, 0.36) transparent;
+    }
+    .run-body::-webkit-scrollbar {
+      width: 10px;
+    }
+    .run-body::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .run-body::-webkit-scrollbar-thumb {
+      border-radius: 999px;
+      background: rgba(33, 74, 136, 0.34);
+      border: 2px solid transparent;
+      background-clip: padding-box;
     }
     .job-list {
       display: grid;
       gap: 12px;
-      margin-top: 12px;
+      margin-top: 0;
+      align-content: start;
     }
     .job {
+      position: relative;
+      overflow: hidden;
       border: 1px solid rgba(38, 52, 72, 0.08);
-      border-radius: 18px;
-      padding: 15px 16px;
-      background: var(--glass);
-      animation: fadeUp 0.5s ease both;
+      border-radius: 20px;
+      padding: 16px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.6), transparent 32%),
+        var(--glass);
+      box-shadow: 0 12px 26px rgba(26, 36, 51, 0.05);
+      border-left: 4px solid rgba(33, 74, 136, 0.26);
+      transition: transform 0.24s ease, box-shadow 0.24s ease, border-color 0.24s ease;
+    }
+    .job::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(120deg, transparent 15%, rgba(255,255,255,0.22) 50%, transparent 85%);
+      transform: translateX(-130%);
+      opacity: 0;
+      pointer-events: none;
+    }
+    .job.running {
+      border-left-color: rgba(15, 140, 120, 0.82);
+      box-shadow: 0 18px 40px rgba(15, 140, 120, 0.1);
+    }
+    .job.running::after {
+      opacity: 0;
+      animation: none;
     }
     .job-top {
       display: flex;
@@ -369,9 +761,11 @@ INDEX = """<!doctype html>
     .job-title span { color: var(--muted); font-size: 0.88rem; }
     .steps {
       display: grid;
-      gap: 8px;
+      gap: 10px;
     }
     .step {
+      position: relative;
+      overflow: hidden;
       display: grid;
       grid-template-columns: auto 1fr;
       gap: 10px;
@@ -380,13 +774,74 @@ INDEX = """<!doctype html>
       border-radius: 14px;
       background: var(--panel-bg);
       border: 1px solid rgba(38, 52, 72, 0.06);
-      transition: transform 0.2s ease, background 0.35s ease;
+      border-left-width: 4px;
+      border-left-style: solid;
+      border-left-color: transparent;
+      transition: transform 0.2s ease, background 0.35s ease, border-color 0.2s ease, box-shadow 0.2s ease;
     }
     .step:hover { transform: translateX(2px); }
+    .step::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(110deg, transparent 18%, rgba(255,255,255,0.28) 50%, transparent 82%);
+      transform: translateX(-140%);
+      opacity: 0;
+      pointer-events: none;
+    }
+    .step.running {
+      background:
+        linear-gradient(90deg, rgba(15, 140, 120, 0.12), rgba(255,255,255,0) 42%),
+        linear-gradient(180deg, rgba(15, 140, 120, 0.08), var(--panel-bg));
+      border-left-color: rgba(15, 140, 120, 0.85);
+      box-shadow:
+        0 0 0 1px rgba(15, 140, 120, 0.08),
+        0 14px 28px rgba(15, 140, 120, 0.08);
+    }
+    .step.running::after {
+      opacity: 0;
+      animation: none;
+    }
+    .step.done {
+      border-left-color: rgba(13, 105, 77, 0.7);
+    }
+    .step.failed {
+      border-left-color: rgba(161, 43, 32, 0.7);
+      background: linear-gradient(180deg, rgba(255, 225, 218, 0.55), var(--panel-bg));
+    }
+    .step.pending,
+    .step.skipped {
+      border-left-color: rgba(66, 81, 100, 0.45);
+    }
     .step strong {
       display: block;
       margin-bottom: 3px;
       text-transform: capitalize;
+    }
+    .step-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+    .step-signal {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: rgba(66, 81, 100, 0.35);
+      box-shadow: none;
+      flex: 0 0 auto;
+    }
+    .step.running .step-signal {
+      background: linear-gradient(135deg, #32d5b8, var(--brand));
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22);
+    }
+    .step.done .step-signal {
+      background: rgba(13, 105, 77, 0.7);
+    }
+    .step.failed .step-signal {
+      background: rgba(161, 43, 32, 0.75);
     }
     .step code {
       display: block;
@@ -473,26 +928,63 @@ INDEX = """<!doctype html>
     .history {
       display: grid;
       gap: 10px;
+      align-content: start;
       margin-top: 14px;
       max-height: 360px;
-      overflow: auto;
-      padding-right: 2px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 0;
     }
     .history-item {
-      padding: 14px 16px;
-      border-radius: 16px;
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      padding: 12px 14px;
+      border-radius: 14px;
       background: var(--glass);
       border: 1px solid rgba(38, 52, 72, 0.08);
+      min-height: 0;
     }
-    .history-item strong {
-      display: block;
-      margin-bottom: 6px;
+    .history-item-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      margin-bottom: 0;
+      align-items: center;
+    }
+    .history-domain {
+      appearance: none;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: var(--brand-3);
+      font: inherit;
+      font-weight: 800;
+      font-size: 0.98rem;
+      line-height: 1.2;
+      text-align: left;
+      cursor: pointer;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .history-domain:hover {
+      text-decoration: underline;
+    }
+    .history-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
     }
     .history-item span {
       display: inline-block;
-      margin-right: 8px;
       color: var(--muted);
-      font-size: 0.88rem;
+      font-size: 0.82rem;
+      line-height: 1.35;
+      min-width: 0;
     }
     .inline-note {
       margin-top: 12px;
@@ -515,8 +1007,171 @@ INDEX = """<!doctype html>
     body[data-theme="dark"] .toggle {
       border-color: rgba(180, 207, 241, 0.09);
     }
+    body[data-theme="dark"] .summary-card {
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), var(--panel-bg));
+      border-color: rgba(180, 207, 241, 0.08);
+    }
+    body[data-theme="dark"] .summary-card.running-metric::before {
+      background: linear-gradient(90deg, transparent, rgba(180, 207, 241, 0.5), transparent);
+      opacity: 0.72;
+    }
+    body[data-theme="dark"] .run-shell {
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)),
+        rgba(7, 15, 26, 0.22);
+      border-color: rgba(180, 207, 241, 0.12);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+    }
+    body[data-theme="dark"] .run-statusline {
+      background: rgba(7, 15, 26, 0.46);
+      border-color: rgba(180, 207, 241, 0.1);
+    }
+    body[data-theme="dark"] .job {
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.03), transparent 28%),
+        var(--glass);
+      border-left-color: rgba(117, 157, 219, 0.28);
+    }
+    body[data-theme="dark"] .history-domain {
+      color: #d7e5ff;
+    }
+    body[data-theme="dark"] .step.running {
+      background:
+        linear-gradient(90deg, rgba(15, 140, 120, 0.18), rgba(255,255,255,0) 42%),
+        linear-gradient(180deg, rgba(15, 140, 120, 0.12), var(--panel-bg));
+    }
+    body[data-theme="dark"] .step.failed {
+      background: linear-gradient(180deg, rgba(194, 65, 54, 0.13), var(--panel-bg));
+    }
     body[data-theme="dark"] .stat {
       background: rgba(255,255,255,0.05);
+    }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(3, 10, 18, 0.52);
+      backdrop-filter: blur(10px);
+      z-index: 40;
+    }
+    .modal-backdrop[hidden] {
+      display: none;
+    }
+    .modal-card {
+      width: min(860px, 100%);
+      max-height: min(88vh, 900px);
+      overflow: auto;
+      overflow-x: hidden;
+      border-radius: 28px;
+      border: 1px solid rgba(255,255,255,0.38);
+      background:
+        linear-gradient(135deg, rgba(18, 31, 46, 0.96), rgba(33, 74, 136, 0.92)),
+        linear-gradient(135deg, rgba(15, 140, 120, 0.22), rgba(223, 111, 53, 0.18));
+      color: white;
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.32);
+    }
+    .modal-shell {
+      padding: 24px;
+    }
+    .modal-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      margin-bottom: 16px;
+    }
+    .modal-header h3 {
+      margin: 0 0 6px;
+      font-size: 1.35rem;
+      letter-spacing: -0.03em;
+    }
+    .modal-header .hint {
+      color: rgba(220, 234, 255, 0.84);
+      margin: 0;
+    }
+    .modal-body {
+      display: grid;
+      gap: 14px;
+    }
+    .modal-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .modal-summary {
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .modal-summary strong {
+      display: block;
+      font-size: 1rem;
+      margin-top: 4px;
+      word-break: break-word;
+    }
+    .modal-summary span {
+      display: block;
+      color: rgba(220, 234, 255, 0.78);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .modal-card .cred-card {
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(255,255,255,0.12);
+      box-shadow: none;
+    }
+    .modal-card .cred-card h4,
+    .modal-card .cred-card-header h4 {
+      color: white;
+    }
+    .modal-card .cred-row {
+      border-top-color: rgba(255,255,255,0.12);
+    }
+    .modal-card .cred-row code {
+      color: white;
+    }
+    .modal-card .cred-row span,
+    .modal-card .hint {
+      color: rgba(220, 234, 255, 0.78);
+    }
+    .modal-close {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.1);
+      color: white;
+      border-radius: 14px;
+      min-width: 44px;
+      height: 44px;
+      padding: 0 12px;
+      cursor: pointer;
+      font-size: 1.6rem;
+      line-height: 1;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      box-shadow: 0 10px 20px rgba(0,0,0,0.12);
+      margin-top: 2px;
+    }
+    .modal-close:hover {
+      background: rgba(255,255,255,0.18);
+      transform: translateY(-1px);
+    }
+    .modal-card .mini-button {
+      background: rgba(255,255,255,0.1);
+      color: white;
+      border-color: rgba(255,255,255,0.14);
+    }
+    .modal-card .mini-button.copy-ok {
+      background: rgba(15, 140, 120, 0.22);
+      color: white;
+      border-color: rgba(15, 140, 120, 0.32);
+    }
+    body[data-theme="dark"] .modal-card {
+      border-color: rgba(255,255,255,0.12);
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
@@ -710,10 +1365,14 @@ INDEX = """<!doctype html>
       border-color: rgba(129, 140, 248, 0.45);
       box-shadow: inset 0 0 0 1px rgba(129, 140, 248, 0.24);
     }
-    .status.running,
-    .badge.running {
-      animation: pulseGlow 1.4s ease-in-out infinite;
+    .step .badge.running,
+    .job-top .status.running,
+    .run-header .status.running {
+      background: rgba(15, 140, 120, 0.14);
+      color: var(--brand);
+      box-shadow: inset 0 0 0 1px rgba(15, 140, 120, 0.12);
     }
+    .step.running .badge.running { animation: none; }
     @keyframes riseIn {
       from { opacity: 0; transform: translateY(16px) scale(0.99); }
       to { opacity: 1; transform: translateY(0) scale(1); }
@@ -726,22 +1385,32 @@ INDEX = """<!doctype html>
       from { opacity: 0; }
       to { opacity: 1; }
     }
-    @keyframes pulseGlow {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(15, 140, 120, 0.18); }
-      50% { box-shadow: 0 0 0 8px rgba(15, 140, 120, 0.04); }
+    @keyframes progressFlow {
+      0% { background-position: 0% 0; }
+      100% { background-position: 180% 0; }
     }
-    @keyframes sweep {
-      from { transform: translateX(-120%); }
-      to { transform: translateX(120%); }
+    @keyframes progressSweep {
+      0% { transform: translateX(-120%); opacity: 0; }
+      12% { opacity: 0.7; }
+      100% { transform: translateX(160%); opacity: 0; }
+    }
+    @keyframes sheenDrift {
+      0% { transform: translateX(-135%); }
+      100% { transform: translateX(135%); }
+    }
+    @keyframes driftOrb {
+      0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+      50% { transform: translate3d(10px, -16px, 0) scale(1.08); }
     }
     @media (max-width: 1080px) {
       .grid, .split { grid-template-columns: 1fr; }
+      .run-summary { grid-template-columns: 1fr; }
+      .modal-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 720px) {
       .shell { padding: 18px 12px 32px; }
       .hero, .panel { padding: 20px; }
-      .hero-stats, .form-grid { grid-template-columns: 1fr; }
-      .hero-topbar { align-items: stretch; }
+      .form-grid { grid-template-columns: 1fr; }
       .theme-menu {
         width: min(316px, calc(100vw - 28px));
       }
@@ -755,22 +1424,14 @@ INDEX = """<!doctype html>
 <body>
   <div class="shell">
     <section class="hero">
-      <div class="hero-topbar">
-        <div class="eyebrow">OfferOps Control Room</div>
-      </div>
-      <h1>Provision domains from one clean screen instead of the terminal.</h1>
-      <p>Select the server, enter the slug, paste one or many domains, and watch each infrastructure step advance in real time. When the run finishes, only the credentials you actually need are surfaced.</p>
-      <div class="hero-stats">
-        <div class="stat"><strong id="heroProfiles">0</strong><span>configured profiles</span></div>
-        <div class="stat"><strong id="heroServers">0</strong><span>server targets</span></div>
-        <div class="stat"><strong id="heroJobs">0</strong><span>saved jobs</span></div>
-      </div>
+      <h1>Launch and monitor domain provisioning.</h1>
+      <p>Prepare domains, publish the required records, update nameservers, and collect the final credentials from a single guided workflow.</p>
     </section>
 
     <section class="grid">
-      <div class="card panel">
-        <h2>Start A Run</h2>
-        <p>Choose the kind and server, then add the domain list and offer slug. The resolved profile is shown automatically so the operator never needs to touch CSV rows.</p>
+      <div class="card panel panel-start">
+        <h2>Start Run</h2>
+        <p>Select the environment, add each domain, and provide the offer path that should be deployed for that domain.</p>
         <form id="runForm">
           <div class="form-grid">
             <div class="field">
@@ -782,44 +1443,57 @@ INDEX = """<!doctype html>
               <select id="server" required></select>
             </div>
             <div class="field full">
-              <label for="profilePreview">Resolved Profile</label>
+              <label for="profilePreview">Selected Profile</label>
               <input id="profilePreview" readonly>
-              <div class="hint">The app resolves the final profile from your stack and server choice.</div>
+              <div class="hint">This confirms which environment will be used for the run.</div>
             </div>
             <div class="field full">
-              <label for="slug">Slug / Offer Path</label>
-              <input id="slug" placeholder="v1/msrack" required>
-              <div class="hint">Enter only the path portion. Full URLs also work if pasted.</div>
-            </div>
-            <div class="field full">
-              <label for="domains">Domains</label>
-              <textarea id="domains" placeholder="example.com&#10;example.net&#10;example.org" required></textarea>
-              <div class="hint">Paste one domain per line. Commas and spaces are also accepted.</div>
+              <label for="domainRows">Domains &amp; Slugs</label>
+              <div id="domainRows" class="domain-rows"></div>
+              <div class="hint">Add one row per domain. The offer path can be a short path or a full URL.</div>
             </div>
           </div>
           <div class="toggle-row">
-            <label class="toggle"><input type="checkbox" id="orangeBrowser" checked> Update Orange nameservers automatically</label>
-            <label class="toggle"><input type="checkbox" id="dryRun"> Dry run only</label>
+            <label class="toggle"><input type="checkbox" id="orangeBrowser" checked> Update Orange nameservers</label>
+            <label class="toggle"><input type="checkbox" id="dryRun"> Preview only</label>
           </div>
-          <div class="inline-note" id="runNote">Waiting for config...</div>
+          <div class="inline-note" id="runNote">Waiting for your settings...</div>
           <div class="cta-row">
-            <button class="primary" id="submitButton" type="submit">Launch Provisioning</button>
-            <button class="secondary" id="refreshButton" type="button">Refresh History</button>
+            <button class="primary" id="submitButton" type="submit">Start Provisioning</button>
+            <button class="secondary" id="refreshButton" type="button">Refresh</button>
+            <button class="secondary" id="clearHistoryButton" type="button">Clear History</button>
           </div>
         </form>
       </div>
 
       <div class="split">
-        <div class="card panel">
-          <div id="runMount" class="empty">No active run yet. Start a run to see step-by-step progress here.</div>
+        <div class="card panel panel-run">
+          <div id="runMount" class="empty">No active run yet. Start a run to follow progress here.</div>
         </div>
-        <div class="card panel">
-          <h2>Saved History</h2>
-          <p>Recent saved jobs from the local state file remain visible here for quick reference.</p>
+        <div class="card panel panel-history">
+          <h2>Recent Runs</h2>
+          <p>Review completed runs and open saved credentials when you need them.</p>
           <div id="history" class="history"></div>
         </div>
       </div>
     </section>
+
+    <div id="credentialModal" class="modal-backdrop" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="credentialModalTitle">
+        <div class="modal-shell">
+          <div class="modal-header">
+            <div>
+              <h3 id="credentialModalTitle">Saved Credentials</h3>
+              <div class="hint" id="credentialModalSubtitle">Open a domain from recent history to view its credentials.</div>
+            </div>
+            <button class="modal-close" type="button" id="credentialModalClose" aria-label="Close credentials modal">&times;</button>
+          </div>
+          <div class="modal-body" id="credentialModalBody">
+            <div class="inline-note">Select a domain to load its credentials.</div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <footer style="padding: 28px 10px 4px; text-align: center; color: var(--muted); line-height: 1.7;">
       <div>&copy; 2026 OfferOps Inc. All Rights Reserved.</div>
@@ -884,11 +1558,13 @@ INDEX = """<!doctype html>
       pollHandle: null,
       themeMode: 'auto',
       theme: 'light',
+      reloadToken: null,
     };
 
     async function boot() {
       initializeTheme();
       await Promise.all([loadConfig(), loadHistory()]);
+      watchForReload();
     }
 
     async function loadConfig() {
@@ -903,12 +1579,21 @@ INDEX = """<!doctype html>
       const serverSelect = document.getElementById('server');
       kindSelect.innerHTML = config.kinds.map(kind => `<option value="${escapeHtml(kind)}">${escapeHtml(titleize(kind))}</option>`).join('');
       updateServerOptions();
-      document.getElementById('heroProfiles').textContent = String((config.profiles || []).length);
-      document.getElementById('heroServers').textContent = String((config.servers || []).length);
-      document.getElementById('runNote').textContent = 'Profile selection is now driven by dropdowns instead of CSV editing.';
+      document.getElementById('runNote').textContent = 'Choose a stack and server to preview the profile.';
       kindSelect.addEventListener('change', updateServerOptions);
       serverSelect.addEventListener('change', updateProfilePreview);
       updateProfilePreview();
+      ensureInitialDomainRow();
+    }
+
+    function ensureInitialDomainRow() {
+      const mount = document.getElementById('domainRows');
+      if (!mount) return;
+      if (!mount.querySelector('.domain-row')) {
+        addDomainRow();
+      } else {
+        syncRowButtons();
+      }
     }
 
     function initializeTheme() {
@@ -985,7 +1670,7 @@ INDEX = """<!doctype html>
       }
       const note = state.themeMode === 'auto'
         ? `Using ${state.theme} from your device`
-        : `Using ${state.theme} appearance manually`;
+        : `Using ${state.theme} appearance`;
       document.getElementById('themeMenuNote').textContent = note;
     }
 
@@ -1004,37 +1689,180 @@ INDEX = """<!doctype html>
       document.getElementById('profilePreview').value = profile;
     }
 
+    function buildDomainRow(domain = '', slug = '') {
+      const row = document.createElement('div');
+      row.className = 'domain-row';
+      row.setAttribute('data-row', '');
+      row.innerHTML = `
+        <input class="row-domain" type="text" placeholder="example.com" value="${escapeHtml(domain)}" autocomplete="off" spellcheck="false" required aria-label="Domain">
+        <input class="row-slug"   type="text" placeholder="v1/msrack"   value="${escapeHtml(slug)}"   autocomplete="off" spellcheck="false" required aria-label="Offer slug / path">
+        <button class="row-button row-add"    type="button" data-action="add"    aria-label="Add another row">+</button>
+        <button class="row-button row-remove" type="button" data-action="remove" aria-label="Remove this row">&times;</button>
+      `;
+      const domainInput = row.querySelector('.row-domain');
+      const slugInput = row.querySelector('.row-slug');
+      const advance = (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        const next = row.nextElementSibling;
+        if (next && next.matches('.domain-row')) {
+          next.querySelector('.row-domain').focus();
+        } else {
+          addDomainRow();
+          const added = document.querySelector('#domainRows .domain-row:last-child .row-domain');
+          if (added) added.focus();
+        }
+      };
+      domainInput.addEventListener('keydown', advance);
+      slugInput.addEventListener('keydown', advance);
+
+      const addBtn = row.querySelector('[data-action="add"]');
+      const removeBtn = row.querySelector('[data-action="remove"]');
+      if (addBtn) {
+        addBtn.addEventListener('click', () => {
+          addDomainRow();
+          const added = document.querySelector('#domainRows .domain-row:last-child .row-domain');
+          if (added) added.focus();
+        });
+      }
+      if (removeBtn) {
+        removeBtn.addEventListener('click', () => removeDomainRow(row));
+      }
+      return row;
+    }
+
+    function addDomainRow(domain = '', slug = '') {
+      const mount = document.getElementById('domainRows');
+      if (!mount) return null;
+      const row = buildDomainRow(domain, slug);
+      mount.appendChild(row);
+      syncRowButtons();
+      return row;
+    }
+
+    function removeDomainRow(row) {
+      if (!row) return;
+      const mount = document.getElementById('domainRows');
+      if (!mount) return;
+      if (mount.querySelectorAll('.domain-row').length <= 1) {
+        row.querySelector('.row-domain').value = '';
+        row.querySelector('.row-slug').value = '';
+        row.querySelector('.row-domain').focus();
+        return;
+      }
+      row.remove();
+      syncRowButtons();
+    }
+
+    function syncRowButtons() {
+      const rows = document.querySelectorAll('#domainRows .domain-row');
+      rows.forEach((row, index) => {
+        const removeBtn = row.querySelector('.row-remove');
+        if (removeBtn) {
+          removeBtn.disabled = rows.length === 1;
+        }
+      });
+    }
+
+    function collectDomainRows() {
+      return [...document.querySelectorAll('#domainRows .domain-row')]
+        .map((row) => ({
+          domain: row.querySelector('.row-domain').value.trim(),
+          offer_path: row.querySelector('.row-slug').value.trim(),
+        }))
+        .filter((row) => row.domain);
+    }
+
     async function loadHistory() {
       const response = await fetch('/api/state');
       const payload = await response.json();
       const jobs = Object.values(payload.jobs || {});
-      document.getElementById('heroJobs').textContent = String(jobs.length);
+      const credentialsHistory = payload.credentials_history || [];
+      const heroJobs = document.getElementById('heroJobs');
+      if (heroJobs) {
+        heroJobs.textContent = String(jobs.length + credentialsHistory.length);
+      }
       const history = document.getElementById('history');
-      if (!jobs.length) {
-        history.innerHTML = '<div class="history-item">No saved jobs yet.</div>';
+      const savedHistory = [
+        ...jobs.slice().reverse().map((job) => ({ kind: 'job', ...job })),
+        ...credentialsHistory
+          .slice()
+          .reverse()
+          .filter((item) => !jobs.some((job) => job.domain === item.domain))
+          .map((item) => ({ kind: 'credentials', ...item })),
+      ];
+      if (savedHistory.length) {
+        history.innerHTML = savedHistory.slice(0, 18).map(item => `
+          <div class="history-item">
+            <div class="history-item-top">
+              <button class="history-domain" type="button" onclick='openCredentialsModal(${JSON.stringify(item.domain)})'>${escapeHtml(item.domain)}</button>
+              <span class="${item.kind === 'job' ? `status ${escapeHtml(item.status)}` : 'status done'}">${escapeHtml(item.kind === 'job' ? item.status : 'saved')}</span>
+            </div>
+            <div class="history-meta">
+              <span>${escapeHtml(item.profile || 'saved job')}</span>
+              <span>${escapeHtml(item.kind === 'job' ? 'Run result' : (item.file || 'credentials file'))}</span>
+            </div>
+          </div>
+        `).join('');
         return;
       }
-      history.innerHTML = jobs.reverse().slice(0, 18).map(job => `
-        <div class="history-item">
-          <strong>${escapeHtml(job.domain)}</strong>
-          <span>${escapeHtml(job.profile)}</span>
-          <span class="status ${escapeHtml(job.status)}">${escapeHtml(job.status)}</span>
-        </div>
-      `).join('');
+      history.innerHTML = '<div class="history-item">No saved jobs yet.</div>';
+    }
+
+    async function watchForReload() {
+      try {
+        const response = await fetch('/api/reload-token', { cache: 'no-store' });
+        if (!response.ok) return;
+        const payload = await response.json();
+        state.reloadToken = payload.token;
+      } catch (error) {
+        return;
+      }
+
+      setInterval(async () => {
+        try {
+          const response = await fetch('/api/reload-token', { cache: 'no-store' });
+          if (!response.ok) return;
+          const payload = await response.json();
+          if (state.reloadToken && payload.token !== state.reloadToken) {
+            window.location.reload();
+            return;
+          }
+          state.reloadToken = payload.token;
+        } catch (error) {
+          // Ignore temporary restarts while dev reload is cycling.
+        }
+      }, 1200);
+    }
+
+    async function clearHistory() {
+      const confirmed = window.confirm('Delete all recent runs and saved credentials? This cannot be undone.');
+      if (!confirmed) return;
+      const response = await fetch('/api/state/clear', { method: 'POST' });
+      if (!response.ok) {
+        document.getElementById('runNote').textContent = 'Could not clear history right now.';
+        return;
+      }
+      await loadHistory();
+      document.getElementById('runNote').textContent = 'History cleared.';
     }
 
     async function submitRun(event) {
       event.preventDefault();
+      const rows = collectDomainRows();
+      if (!rows.length) {
+        document.getElementById('runNote').textContent = 'Add at least one domain before starting.';
+        return;
+      }
       const body = {
         kind: document.getElementById('kind').value,
         server: document.getElementById('server').value,
-        offer_path: document.getElementById('slug').value.trim(),
-        domains: document.getElementById('domains').value,
+        job_rows: rows,
         orange_browser: document.getElementById('orangeBrowser').checked,
         dry_run: document.getElementById('dryRun').checked,
       };
       setRunningState(true);
-      document.getElementById('runNote').textContent = 'Provisioning started. Live updates will appear on the right.';
+      document.getElementById('runNote').textContent = 'Provisioning started. Live updates will appear here.';
       const response = await fetch('/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1076,22 +1904,47 @@ INDEX = """<!doctype html>
       const jobs = run.jobs || [];
       const total = jobs.length || 1;
       const completed = jobs.filter(job => job.status === 'done' || job.status === 'failed').length;
+      const running = jobs.filter(job => job.status === 'running').length;
+      const failed = jobs.filter(job => job.status === 'failed').length;
       const progress = Math.round((completed / total) * 100);
+      const isRunning = run.status === 'running';
       mount.className = '';
       mount.innerHTML = `
-        <div class="run-header">
-          <div>
-            <h3>${escapeHtml(run.profile || 'Run')}</h3>
-            <div class="hint">${escapeHtml(run.status_message || '')}</div>
+        <div class="run-shell ${isRunning ? 'running' : ''}">
+          <div class="run-header">
+            <div>
+              <div class="run-kicker">${isRunning ? 'Live Provisioning' : 'Run Snapshot'}</div>
+              <h3>${escapeHtml(run.profile || 'Run')}</h3>
+            </div>
+            <span class="status ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
           </div>
-          <span class="status ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
+          <div class="run-statusline">
+            <span class="run-status-dot" aria-hidden="true"></span>
+            <div class="run-status-copy">${escapeHtml(run.status_message || '')}</div>
+          </div>
+          <div class="progress-rail"><div class="progress-fill" style="width:${progress}%"></div></div>
+          <div class="run-summary">
+            <div class="summary-card">
+              <strong>${completed}/${total}</strong>
+              <span>Domains completed</span>
+            </div>
+            <div class="summary-card ${running ? 'running-metric' : ''}">
+              <strong>${running}</strong>
+              <span>Jobs actively updating</span>
+            </div>
+            <div class="summary-card">
+              <strong>${failed}</strong>
+              <span>Domains with errors</span>
+            </div>
+          </div>
+          <div class="run-body">
+            <div class="job-list">${jobs.map(renderJob).join('')}</div>
+          </div>
         </div>
-        <div class="progress-rail"><div class="progress-fill" style="width:${progress}%"></div></div>
-        <div class="job-list">${jobs.map(renderJob).join('')}</div>
       `;
       document.getElementById('runNote').textContent = run.status === 'running'
         ? (run.status_message || 'Run in progress.')
-        : 'Run finished. Final credentials are shown in the result cards.';
+        : 'Run finished. Credentials are available in the results.';
     }
 
     function renderJob(job) {
@@ -1108,7 +1961,7 @@ INDEX = """<!doctype html>
             </div>
             <div class="cred-grid">
               ${renderCredential('cPanel Username', job.credentials.cpanel_username)}
-              ${renderCredential('cPanel Password', job.credentials.cpanel_account_password || 'Existing account password not re-shown')}
+              ${renderCredential('cPanel Password', job.credentials.cpanel_account_password || 'Already available on the existing account')}
               ${renderCredential('Support Email', job.credentials.support_email)}
               ${renderCredential('Support Email Password', job.credentials.support_email_password)}
               ${renderCredential('Database Name', job.credentials.database_name)}
@@ -1121,7 +1974,7 @@ INDEX = """<!doctype html>
       ` : '';
 
       return `
-        <article class="job">
+        <article class="job ${escapeHtml(job.status)}">
           <div class="job-top">
             <div class="job-title">
               <strong>${escapeHtml(job.domain)}</strong>
@@ -1137,10 +1990,13 @@ INDEX = """<!doctype html>
 
     function renderStep(step) {
       return `
-        <div class="step">
+        <div class="step ${escapeHtml(step.status)}">
           <span class="badge ${escapeHtml(step.status)}">${escapeHtml(step.status)}</span>
           <div>
-            <strong>${escapeHtml(step.name.replaceAll('-', ' '))}</strong>
+            <div class="step-head">
+              <span class="step-signal" aria-hidden="true"></span>
+              <strong>${escapeHtml(step.name.replaceAll('-', ' '))}</strong>
+            </div>
             <code>${escapeHtml(step.message || '')}</code>
           </div>
         </div>
@@ -1159,6 +2015,87 @@ INDEX = """<!doctype html>
           <button class="mini-button" type="button" onclick='copyText(${encodedValue}, this)'>Copy</button>
         </div>
       `;
+    }
+
+    async function openCredentialsModal(domain) {
+      const modal = document.getElementById('credentialModal');
+      const title = document.getElementById('credentialModalTitle');
+      const subtitle = document.getElementById('credentialModalSubtitle');
+      const body = document.getElementById('credentialModalBody');
+      if (!modal || !title || !subtitle || !body) return;
+
+      title.textContent = `Saved Credentials — ${domain}`;
+      subtitle.textContent = 'Loading saved credentials...';
+      body.innerHTML = '<div class="inline-note">Loading credentials…</div>';
+      modal.hidden = false;
+      document.body.style.overflow = 'hidden';
+
+      try {
+        const response = await fetch(`/api/credentials/${encodeURIComponent(domain)}`);
+        const payload = await response.json();
+        if (!response.ok) {
+          body.innerHTML = `<div class="inline-note">${escapeHtml(payload.error || 'Unable to load saved credentials.')}</div>`;
+          subtitle.textContent = 'Could not load credentials.';
+          return;
+        }
+        renderCredentialsModal(payload, body, subtitle);
+      } catch (error) {
+        console.error(error);
+        body.innerHTML = '<div class="inline-note">Could not load credentials right now.</div>';
+        subtitle.textContent = 'Could not load credentials.';
+      }
+    }
+
+    function renderCredentialsModal(credentials, body, subtitle) {
+      const encodedCredentials = encodeCredentialArg(credentials);
+      const summaryCards = [
+        ['Domain', credentials.domain],
+        ['Profile', credentials.profile || credentials.profile_kind || ''],
+        ['Offer Path', credentials.offer_path || ''],
+        ['Document Root', credentials.document_root || ''],
+        ['Nameservers', (credentials.nameservers || []).join(', ')],
+        ['File', credentials.file || `${String(credentials.domain || 'credentials').replace(/[^a-z0-9._-]+/gi, '_')}.json`],
+      ].filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '');
+
+      body.innerHTML = `
+        <div class="modal-grid">
+          ${summaryCards.map(([label, value]) => `
+            <div class="modal-summary">
+              <span>${escapeHtml(label)}</span>
+              <strong>${escapeHtml(Array.isArray(value) ? value.join(', ') : String(value))}</strong>
+            </div>
+          `).join('')}
+        </div>
+        <div class="credentials">
+          <div class="cred-card">
+            <div class="cred-card-header">
+              <h4>Required Credentials</h4>
+              <div class="mini-actions">
+                <button class="mini-button" type="button" onclick='copyCredentialBundle(this, ${JSON.stringify(encodedCredentials)})'>Copy All</button>
+                <button class="mini-button" type="button" onclick='downloadCredentialBundle(${JSON.stringify(encodedCredentials)}, ${JSON.stringify(credentials.domain || "credentials")})'>Export JSON</button>
+              </div>
+            </div>
+            <div class="cred-grid">
+              ${renderCredential('cPanel Username', credentials.cpanel_username)}
+              ${renderCredential('cPanel Password', credentials.cpanel_account_password || 'Already available on the existing account')}
+              ${renderCredential('Support Email', credentials.support_email)}
+              ${renderCredential('Support Email Password', credentials.support_email_password)}
+              ${renderCredential('Database Name', credentials.database_name)}
+              ${renderCredential('Database User', credentials.database_user)}
+              ${renderCredential('Database Password', credentials.database_user_password)}
+              ${renderCredential('Nameservers', (credentials.nameservers || []).join(', '))}
+            </div>
+          </div>
+        </div>
+      `;
+      subtitle.textContent = 'Use the copy buttons or export the full credentials bundle.';
+    }
+
+    function closeCredentialsModal() {
+      const modal = document.getElementById('credentialModal');
+      if (!modal) return;
+      modal.hidden = true;
+      document.body.style.overflow = '';
     }
 
     function setRunningState(running) {
@@ -1187,7 +2124,7 @@ INDEX = """<!doctype html>
       const rows = [
         ['Domain', credentials.domain],
         ['cPanel Username', credentials.cpanel_username],
-        ['cPanel Password', credentials.cpanel_account_password || 'Existing account password not re-shown'],
+        ['cPanel Password', credentials.cpanel_account_password || 'Already available on the existing account'],
         ['Support Email', credentials.support_email],
         ['Support Email Password', credentials.support_email_password],
         ['Database Name', credentials.database_name],
@@ -1230,9 +2167,27 @@ INDEX = """<!doctype html>
 
     document.getElementById('runForm').addEventListener('submit', submitRun);
     document.getElementById('refreshButton').addEventListener('click', loadHistory);
+    document.getElementById('clearHistoryButton').addEventListener('click', clearHistory);
+    const credentialModal = document.getElementById('credentialModal');
+    const credentialModalClose = document.getElementById('credentialModalClose');
+    if (credentialModalClose) {
+      credentialModalClose.addEventListener('click', closeCredentialsModal);
+    }
+    if (credentialModal) {
+      credentialModal.addEventListener('click', (event) => {
+        if (event.target === credentialModal) {
+          closeCredentialsModal();
+        }
+      });
+    }
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && credentialModal && !credentialModal.hidden) {
+        closeCredentialsModal();
+      }
+    });
     boot();
-  </script>
-</body>
+    </script>
+  </body>
 </html>"""
 
 
@@ -1247,18 +2202,19 @@ class RunManager:
     def start_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         kind = str(payload.get("kind", "")).strip().lower()
         server = str(payload.get("server", "")).strip().lower()
-        offer_path = str(payload.get("offer_path", "")).strip()
-        domains = self._parse_domains(payload.get("domains", ""))
         if not kind or not server:
             raise ValueError("Stack and server are required.")
-        if not offer_path:
-            raise ValueError("Slug / offer path is required.")
-        if not domains:
+
+        job_rows = self._normalize_job_rows(payload)
+        if not job_rows:
             raise ValueError("At least one domain is required.")
 
         profile = self.config.resolve_profile_for_kind_server(kind, server)
         run_id = uuid.uuid4().hex
-        jobs = [DomainJob(domain=domain, profile=profile, offer_path=offer_path) for domain in domains]
+        jobs = [
+            DomainJob(domain=row["domain"], profile=profile, offer_path=row["offer_path"])
+            for row in job_rows
+        ]
         created_at = datetime.now(timezone.utc).isoformat()
         run_state = {
             "run_id": run_id,
@@ -1270,7 +2226,13 @@ class RunManager:
             "created_at": created_at,
             "finished_at": "",
             "jobs": [
-                {"domain": job.domain, "profile": job.profile, "status": StepStatus.PENDING.value, "steps": []}
+                {
+                    "domain": job.domain,
+                    "profile": job.profile,
+                    "offer_path": job.resolved_offer_path(),
+                    "status": StepStatus.PENDING.value,
+                    "steps": [],
+                }
                 for job in jobs
             ],
             "dry_run": bool(payload.get("dry_run", False)),
@@ -1360,8 +2322,55 @@ class RunManager:
             seen.add(domain)
         return domains
 
+    @classmethod
+    def _normalize_job_rows(cls, payload: dict[str, Any]) -> list[dict[str, str]]:
+        """Resolve the per-domain job rows from a run payload.
 
-def serve(host: str, port: int, settings: Settings, config: AppConfig, state: StateStore) -> None:
+        Prefers the explicit ``job_rows`` array of ``{domain, offer_path}``
+        objects. Falls back to the legacy ``offer_path`` + free-text
+        ``domains`` payload so older callers keep working.
+        """
+        raw_rows = payload.get("job_rows")
+        if raw_rows:
+            rows: list[dict[str, str]] = []
+            for raw in raw_rows:
+                if not isinstance(raw, dict):
+                    continue
+                domain = str(raw.get("domain", "")).strip().lower()
+                offer_path = str(raw.get("offer_path", "")).strip()
+                if not domain:
+                    continue
+                if not offer_path:
+                    raise ValueError(f"Slug / offer path is required for {domain}")
+                rows.append({"domain": domain, "offer_path": offer_path})
+            return rows
+
+        offer_path = str(payload.get("offer_path", "")).strip()
+        if not offer_path:
+            raise ValueError("Slug / offer path is required.")
+        domains = cls._parse_domains(payload.get("domains", ""))
+        return [{"domain": domain, "offer_path": offer_path} for domain in domains]
+ 
+
+def _watchable_files() -> list[Path]:
+    root = Path(__file__).resolve().parent
+    return sorted(path for path in root.rglob("*.py") if path.is_file())
+
+
+def _reload_token() -> str:
+    root = Path(__file__).resolve().parent
+    parts: list[str] = []
+    for path in _watchable_files():
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        parts.append(f"{path.relative_to(root)}:{stat.st_mtime_ns}")
+    return "|".join(parts)
+
+
+def _serve_once(host: str, port: int, settings: Settings, config: AppConfig, state: StateStore) -> None:
+    reload_token = _reload_token()
     manager = RunManager(settings, config, state)
 
     class Handler(BaseHTTPRequestHandler):
@@ -1371,7 +2380,9 @@ def serve(host: str, port: int, settings: Settings, config: AppConfig, state: St
                 self._send(200, INDEX, "text/html; charset=utf-8")
                 return
             if parsed.path == "/api/state":
-                self._send_json(200, state.read())
+                payload = state.read()
+                payload["credentials_history"] = state.list_credentials()
+                self._send_json(200, payload)
                 return
             if parsed.path == "/api/config":
                 profiles = config.profile_summaries()
@@ -1392,6 +2403,20 @@ def serve(host: str, port: int, settings: Settings, config: AppConfig, state: St
                 }
                 self._send_json(200, payload)
                 return
+            if parsed.path == "/api/reload-token":
+                self._send_json(200, {"token": reload_token})
+                return
+            if parsed.path.startswith("/api/credentials/"):
+                domain = unquote(parsed.path.rsplit("/", 1)[-1]).strip().lower()
+                credentials = state.get_credentials(domain)
+                if credentials is None:
+                    self._send_json(404, {"error": "credentials not found"})
+                    return
+                payload = dict(credentials)
+                payload.setdefault("profile", str(payload.get("profile_kind", "")))
+                payload.setdefault("file", f"{domain.replace('/', '_')}.json")
+                self._send_json(200, payload)
+                return
             if parsed.path.startswith("/api/runs/"):
                 run_id = parsed.path.rsplit("/", 1)[-1]
                 payload = manager.get_run(run_id)
@@ -1404,6 +2429,10 @@ def serve(host: str, port: int, settings: Settings, config: AppConfig, state: St
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path == "/api/state/clear":
+                state.clear_history()
+                self._send_json(200, {"ok": True})
+                return
             if parsed.path != "/api/run":
                 self._send_json(404, {"error": "not found"})
                 return
@@ -1432,3 +2461,40 @@ def serve(host: str, port: int, settings: Settings, config: AppConfig, state: St
 
     print(f"OfferOps dashboard: http://{host}:{port}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
+
+
+def serve(host: str, port: int, settings: Settings, config: AppConfig, state: StateStore, reload: bool = False) -> None:
+    if not reload or os.environ.get("OFFEROPS_RELOAD_CHILD") == "1":
+        _serve_once(host, port, settings, config, state)
+        return
+
+    env = dict(os.environ)
+    env["OFFEROPS_RELOAD_CHILD"] = "1"
+    command = [sys.executable, "-m", "offerops.cli", "web", "--host", host, "--port", str(port)]
+    print(f"OfferOps dev reload watching: http://{host}:{port}")
+
+    child: subprocess.Popen[bytes] | None = None
+    last_signature = ""
+    try:
+        while True:
+            signature = _reload_token()
+            if signature != last_signature:
+                last_signature = signature
+                if child is not None:
+                    child.terminate()
+                    try:
+                        child.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        child.kill()
+                        child.wait(timeout=5)
+                child = subprocess.Popen(command, env=env)
+            if child is not None and child.poll() is not None:
+                child = None
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        if child is not None:
+            child.terminate()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                child.kill()

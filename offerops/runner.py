@@ -202,11 +202,12 @@ class OfferProvisioner:
         }
 
     def _orange_browser(self, profile_name: str) -> OrangeBrowserClient:
-        allowed_accounts = set(self.config.orange_account_names_for(profile_name))
+        allowed_accounts = self.config.orange_account_names_for(profile_name)
         accounts = [
             OrangeAccount(name=name, username=username, password=password)
-            for name, (username, password) in self.settings.orange_accounts.items()
-            if name in allowed_accounts
+            for name in allowed_accounts
+            if name in self.settings.orange_accounts
+            for username, password in [self.settings.orange_accounts[name]]
         ]
         return OrangeBrowserClient(
             login_url=self.settings.orange_login_url,
@@ -253,17 +254,17 @@ class OfferProvisioner:
     @staticmethod
     def _step_message(name: str) -> str:
         messages = {
-            "cloudflare-zone": "Creating or reusing the Cloudflare zone.",
-            "cloudflare-bot-fight-mode": "Applying Cloudflare Bot Fight Mode.",
+            "cloudflare-zone": "Preparing the domain zone.",
+            "cloudflare-bot-fight-mode": "Applying security settings.",
             "orange-nameservers": "Updating nameservers in Orange.",
-            "cloudflare-dns": "Publishing DNS records to Cloudflare.",
-            "whm-account": "Creating or reusing the WHM/cPanel account.",
+            "cloudflare-dns": "Publishing DNS records.",
+            "whm-account": "Preparing the hosting account.",
             "cpanel-support-email": "Creating the support mailbox.",
-            "email-deliverability": "Publishing SPF, DKIM, and DMARC records.",
+            "email-deliverability": "Publishing email deliverability records.",
             "files": "Uploading starter files.",
-            "database": "Creating the database and user.",
-            "cron": "Registering the cron job.",
-            "secrets": "Saving the generated credentials.",
+            "database": "Creating the database.",
+            "cron": "Scheduling recurring tasks.",
+            "secrets": "Saving the final credentials.",
         }
         return messages.get(name, name)
 

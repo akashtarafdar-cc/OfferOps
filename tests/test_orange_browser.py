@@ -168,6 +168,25 @@ class OrangeBrowserTests(unittest.TestCase):
         self.assertTrue(result)
         confirm_mock.assert_called_once()
 
+    def test_connection_reset_is_reported_as_a_friendly_automation_error(self) -> None:
+        client = OrangeBrowserClient(
+            login_url="https://secure.orangewebsite.com/login",
+            accounts=[OrangeAccount("sweeps_live", "user1", "pass1")],
+            dry_run=False,
+        )
+
+        class FakeDriver:
+            def quit(self) -> None:
+                pass
+
+        with patch.object(client, "_build_driver", return_value=FakeDriver()):
+            with patch.object(client, "_login", side_effect=Exception("unknown error: net::ERR_CONNECTION_RESET")):
+                with self.assertRaisesRegex(
+                    OrangeAutomationNotConfigured,
+                    "Orange reset the browser connection while loading the page",
+                ):
+                    client.update_nameservers("example.com", ["ns1.example.com", "ns2.example.com"])
+
 
 if __name__ == "__main__":
     unittest.main()

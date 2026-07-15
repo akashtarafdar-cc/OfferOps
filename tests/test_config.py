@@ -108,6 +108,14 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.whm_account_for("sweeps-bkp"), "sweeps_bkp")
         self.assertEqual(config.whm_account_for("sweeps-live-2"), "sweeps_live_2")
         self.assertEqual(config.whm_account_for("sweeps-bkp-2"), "sweeps_bkp_2")
+        self.assertEqual(config.whm_account_for("sweeps-live-3"), "sweeps_live_3")
+
+    def test_orange_accounts_include_live_3_and_fallback_accounts(self) -> None:
+        config = load_app_config(Path("config.json"))
+        self.assertEqual(
+            config.orange_account_names_for("sweeps-live-3"),
+            ["sweeps_live", "sweeps_bkp", "sweeps_live_2", "sweeps_bkp_2", "sweeps_live_3", "ecom_live", "ecom_bkp"],
+        )
 
     def test_profile_lookup_accepts_spaced_server_names(self) -> None:
         config = load_app_config(Path("config.json"))
@@ -117,7 +125,7 @@ class ConfigTests(unittest.TestCase):
     def test_server_choices_are_grouped_by_kind(self) -> None:
         config = load_app_config(Path("config.json"))
         self.assertEqual(config.server_choices_for_kind("ecom"), ["live", "bkp"])
-        self.assertEqual(config.server_choices_for_kind("sweeps"), ["live", "live-2", "bkp", "bkp-2"])
+        self.assertEqual(config.server_choices_for_kind("sweeps"), ["live", "live-2", "live-3", "bkp", "bkp-2"])
 
     def test_kind_and_server_resolve_to_profile(self) -> None:
         config = load_app_config(Path("config.json"))
@@ -125,15 +133,15 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.resolve_profile_for_kind_server("sweeps", "live-2"), "sweeps-live-2")
         self.assertEqual(config.resolve_profile_for_kind_server("sweeps", "bkp 2"), "sweeps-bkp-2")
 
-    def test_orange_accounts_are_scoped_by_profile_group(self) -> None:
+    def test_orange_accounts_prefer_profile_group_then_fallback(self) -> None:
         config = load_app_config(Path("config.json"))
         self.assertEqual(
             config.orange_account_names_for("sweeps-live"),
-            ["sweeps_live", "sweeps_bkp", "sweeps_live_2", "sweeps_bkp_2"],
+            ["sweeps_live", "sweeps_bkp", "sweeps_live_2", "sweeps_bkp_2", "sweeps_live_3", "ecom_live", "ecom_bkp"],
         )
         self.assertEqual(
             config.orange_account_names_for("ecom-live"),
-            ["ecom_live", "ecom_bkp"],
+            ["ecom_live", "ecom_bkp", "sweeps_live", "sweeps_bkp", "sweeps_live_2", "sweeps_bkp_2", "sweeps_live_3"],
         )
 
     def test_cloudflare_bot_fight_mode_defaults_to_enabled(self) -> None:

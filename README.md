@@ -1,37 +1,37 @@
 # OfferOps
 
-> Provision domains, DNS, hosting, email, databases, and cron jobs from a single interface.
+> Provision domains, DNS, hosting, email, databases, and scheduled tasks from one reliable workflow.
 
-OfferOps is a Python CLI and web dashboard that automates offer-site infrastructure provisioning through Cloudflare and WHM/cPanel. Instead of manually configuring every domain, operators can deploy complete site infrastructure using reusable deployment profiles and a guided dashboard workflow.
+OfferOps helps teams launch offer-site infrastructure with repeatable profiles and a guided dashboard. It coordinates DNS, hosting, email, database setup, registrar nameservers, and credentials so each domain follows the same dependable process.
 
 ---
 
 ## Dashboard Preview
 
-A modern operations dashboard with Light, Dark, and System theme support for provisioning infrastructure, monitoring deployment progress, and reviewing historical runs from a single interface.
+A focused operations dashboard for preparing domains, tracking live progress, and reviewing completed runs.
 
-### OfferOps Control Room
+### OfferOps Dashboard
 
-![OfferOps Control Room](screenshots/Offerops_dashboard_1.png)
+![OfferOps Dashboard](screenshots/Offerops_dashboard_1.png)
 
 ### Provisioning Workflow
 
 ![OfferOps Provisioning Workflow](screenshots/Offerops_dashboard_2.png)
 
-The dashboard enables operators to:
+The dashboard supports:
 
 * Provision one or many domains at once
-* Select deployment stacks and server targets
-* Configure offer paths without editing CSV files
+* Select the target environment for each run
+* Add offer paths directly in the workflow
 * Monitor infrastructure tasks in real time
-* Review historical provisioning runs
-* Surface only the credentials required after deployment
+* Review recent provisioning runs
+* Open saved credentials when needed
 
 ---
 
 ## Why OfferOps?
 
-Provisioning offer infrastructure often requires repetitive work across multiple systems:
+Provisioning offer infrastructure usually spans several systems:
 
 * Cloudflare
 * WHM/cPanel
@@ -41,7 +41,7 @@ Provisioning offer infrastructure often requires repetitive work across multiple
 * Database creation
 * Cron scheduling
 
-OfferOps standardizes the entire process into a repeatable workflow that reduces manual effort and deployment mistakes.
+OfferOps turns that work into a repeatable workflow that reduces missed steps, keeps results easy to review, and gives every domain the same deployment path.
 
 ---
 
@@ -69,15 +69,15 @@ OfferOps standardizes the entire process into a repeatable workflow that reduces
 
 ### Registrar Integration
 
-* Update nameservers automatically through Orange browser automation
+* Update nameservers through Orange when automation is enabled
 * Support manual registrar workflows when automation is disabled
 
 ### Operations Dashboard
 
-* Launch deployments without editing CSV files
+* Launch guided dashboard runs
 * Live provisioning status updates
 * Historical run tracking
-* Local state persistence for auditing and retries
+* Saved run results and credentials for later review
 
 ---
 
@@ -92,8 +92,8 @@ For every domain submitted, OfferOps can:
 5. Publish deliverability records
 6. Upload starter files
 7. Create the database and user
-8. Register cron jobs
-9. Save deployment state and results
+8. Schedule recurring tasks
+9. Save run results and credentials
 
 ---
 
@@ -154,7 +154,7 @@ Update the following values:
 Start the web interface:
 
 ```powershell
-python -m offerops.cli web --port 8787
+python -m offerops.cli web --port 8787 --reload
 ```
 
 Open:
@@ -167,7 +167,7 @@ http://127.0.0.1:8787
 
 ## Running a Dry Run
 
-Validate provisioning without making changes:
+Preview a run without making changes:
 
 ```powershell
 python -m offerops.cli run --csv data/domains.csv --dry-run
@@ -177,7 +177,7 @@ python -m offerops.cli run --csv data/domains.csv --dry-run
 
 ## Running Provisioning
 
-Execute a deployment:
+Run provisioning:
 
 ```powershell
 python -m offerops.cli run --csv data/domains.csv
@@ -187,13 +187,13 @@ python -m offerops.cli run --csv data/domains.csv
 
 ## Orange Nameserver Automation
 
-Run provisioning with automatic registrar updates:
+Run provisioning with registrar updates enabled:
 
 ```powershell
 python -m offerops.cli run --csv data/domains.csv --orange-browser
 ```
 
-Test only the registrar automation:
+Run only the registrar update step:
 
 ```powershell
 python -m offerops.cli orange-ns --domain example.com --profile sweeps-live
@@ -214,7 +214,7 @@ brightbuyexchange.test,sweeps-live,https://www.brightbuyexchange.test/v1/msrack,
 | Field      | Description         |
 | ---------- | ------------------- |
 | domain     | Domain to provision |
-| profile    | Deployment profile  |
+| profile    | Target environment  |
 | offer_path | Offer URL or path   |
 | notes      | Optional metadata   |
 
@@ -222,7 +222,7 @@ brightbuyexchange.test,sweeps-live,https://www.brightbuyexchange.test/v1/msrack,
 
 ## Profiles
 
-OfferOps supports multiple deployment profiles.
+OfferOps supports multiple target environments.
 
 Example profile types:
 
@@ -233,10 +233,10 @@ Example profile types:
 * sweeps-live-2
 * sweeps-bkp-2
 
-Profiles determine:
+Profiles define:
 
 * Cloudflare account
-* WHM target
+* Hosting target
 * DNS templates
 * Cron templates
 * Hosting configuration
@@ -294,7 +294,7 @@ build/
 Before pushing:
 
 * Verify no credentials are staged
-* Verify runtime state is excluded
+* Verify generated run data is excluded
 * Use least-privilege API tokens
 * Rotate exposed credentials immediately
 
@@ -314,4 +314,4 @@ Internal tooling project. Use according to your organization's policies.
 
 ---
 
-Built with Python, Cloudflare, WHM/cPanel, Selenium, and a lot less repetitive clicking.
+Built with Python, Cloudflare, WHM/cPanel, Selenium, and a focus on repeatable operations.

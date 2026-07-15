@@ -30,6 +30,7 @@ def main() -> None:
     web_parser = sub.add_parser("web", help="Start the local dashboard.")
     web_parser.add_argument("--host", default="127.0.0.1")
     web_parser.add_argument("--port", type=int, default=8787)
+    web_parser.add_argument("--reload", action="store_true", help="Auto-restart the dashboard when source files change.")
 
     args = parser.parse_args()
     settings = load_settings()
@@ -47,7 +48,7 @@ def main() -> None:
     elif args.command == "status":
         print(json.dumps(state.read(), indent=2))
     elif args.command == "web":
-        serve(args.host, args.port, settings, config, state)
+        serve(args.host, args.port, settings, config, state, reload=args.reload)
 
 
 if __name__ == "__main__":

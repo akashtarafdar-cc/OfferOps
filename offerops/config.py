@@ -101,8 +101,15 @@ class AppConfig:
         profile = self.profile(profile_name)
         configured = profile.get("orange_accounts", [])
         if isinstance(configured, list) and configured:
-            return [str(item).strip() for item in configured if str(item).strip()]
-        return [name for name in self._default_orange_account_order() if name.startswith(f"{account_group}_")]
+            preferred = [str(item).strip() for item in configured if str(item).strip()]
+        else:
+            preferred = [name for name in self._default_orange_account_order() if name.startswith(f"{account_group}_")]
+
+        ordered: list[str] = []
+        for name in preferred + self._default_orange_account_order():
+            if name not in ordered:
+                ordered.append(name)
+        return ordered
 
     def dns_records_for(self, profile_name: str, domain: str) -> list[DnsRecord]:
         profile = self.profile(profile_name)
@@ -170,6 +177,7 @@ class AppConfig:
             "sweeps_bkp",
             "sweeps_live_2",
             "sweeps_bkp_2",
+            "sweeps_live_3",
             "ecom_live",
             "ecom_bkp",
         ]
@@ -235,12 +243,20 @@ def load_settings() -> Settings:
             os.getenv("WHM_SWEEPS_BKP_2_PACKAGE", ""),
             os.getenv("WHM_SWEEPS_BKP_2_CONTACT_EMAIL", ""),
         ),
+        "sweeps_live_3": (
+            os.getenv("WHM_SWEEPS_LIVE_3_BASE_URL", ""),
+            os.getenv("WHM_SWEEPS_LIVE_3_USERNAME", ""),
+            os.getenv("WHM_SWEEPS_LIVE_3_API_TOKEN", ""),
+            os.getenv("WHM_SWEEPS_LIVE_3_PACKAGE", ""),
+            os.getenv("WHM_SWEEPS_LIVE_3_CONTACT_EMAIL", ""),
+        ),
     }
     orange_accounts = {
         "sweeps_live": (os.getenv("ORANGE_SWEEPS_LIVE_USERNAME", ""), os.getenv("ORANGE_SWEEPS_LIVE_PASSWORD", "")),
         "sweeps_bkp": (os.getenv("ORANGE_SWEEPS_BKP_USERNAME", ""), os.getenv("ORANGE_SWEEPS_BKP_PASSWORD", "")),
         "sweeps_live_2": (os.getenv("ORANGE_SWEEPS_LIVE_2_USERNAME", ""), os.getenv("ORANGE_SWEEPS_LIVE_2_PASSWORD", "")),
         "sweeps_bkp_2": (os.getenv("ORANGE_SWEEPS_BKP_2_USERNAME", ""), os.getenv("ORANGE_SWEEPS_BKP_2_PASSWORD", "")),
+        "sweeps_live_3": (os.getenv("ORANGE_SWEEPS_LIVE_3_USERNAME", ""), os.getenv("ORANGE_SWEEPS_LIVE_3_PASSWORD", "")),
         "ecom_live": (os.getenv("ORANGE_ECOM_LIVE_USERNAME", ""), os.getenv("ORANGE_ECOM_LIVE_PASSWORD", "")),
         "ecom_bkp": (os.getenv("ORANGE_ECOM_BKP_USERNAME", ""), os.getenv("ORANGE_ECOM_BKP_PASSWORD", "")),
     }
