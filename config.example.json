@@ -75,6 +75,20 @@
         { "type": "MX", "name": "@", "content": "mail.{domain}", "priority": 10 }
       ]
     },
+    "sweeps-live-4": {
+      "kind": "sweeps",
+      "cloudflare_account": "sweeps",
+      "whm_account": "sweeps_live_4",
+      "servers": ["live", "live-2", "live-3", "live-4"],
+      "server_ip_env": "WHM_SWEEPS_LIVE_4_SERVER_IP",
+      "dns_records": [
+        { "type": "A", "name": "@", "content": "{server_ip}", "proxied": true },
+        { "type": "A", "name": "mail", "content": "{server_ip}", "proxied": false },
+        { "type": "A", "name": "webmail", "content": "{server_ip}", "proxied": false },
+        { "type": "A", "name": "www", "content": "{server_ip}", "proxied": true },
+        { "type": "MX", "name": "@", "content": "mail.{domain}", "priority": 10 }
+      ]
+    },
     "sweeps-bkp": {
       "kind": "sweeps",
       "cloudflare_account": "sweeps",

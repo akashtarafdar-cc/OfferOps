@@ -1963,11 +1963,13 @@ INDEX = """<!doctype html>
               ${renderCredential('cPanel Username', job.credentials.cpanel_username)}
               ${renderCredential('cPanel Password', job.credentials.cpanel_account_password || 'Already available on the existing account')}
               ${renderCredential('Support Email', job.credentials.support_email)}
+              ${renderCredential('Email URL', job.credentials.email_url)}
               ${renderCredential('Support Email Password', job.credentials.support_email_password)}
               ${renderCredential('Database Name', job.credentials.database_name)}
               ${renderCredential('Database User', job.credentials.database_user)}
               ${renderCredential('Database Password', job.credentials.database_user_password)}
               ${renderCredential('Nameservers', (job.credentials.nameservers || []).join(', '))}
+              ${renderCredential('Server IP', job.credentials.server_ip)}
             </div>
           </div>
         </div>
@@ -2053,6 +2055,8 @@ INDEX = """<!doctype html>
         ['Profile', credentials.profile || credentials.profile_kind || ''],
         ['Offer Path', credentials.offer_path || ''],
         ['Document Root', credentials.document_root || ''],
+        ['Email URL', credentials.email_url || (credentials.domain ? `${credentials.domain}/webmail` : '')],
+        ['Server IP', credentials.server_ip || ''],
         ['Nameservers', (credentials.nameservers || []).join(', ')],
         ['File', credentials.file || `${String(credentials.domain || 'credentials').replace(/[^a-z0-9._-]+/gi, '_')}.json`],
       ].filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '');
@@ -2079,11 +2083,13 @@ INDEX = """<!doctype html>
               ${renderCredential('cPanel Username', credentials.cpanel_username)}
               ${renderCredential('cPanel Password', credentials.cpanel_account_password || 'Already available on the existing account')}
               ${renderCredential('Support Email', credentials.support_email)}
+              ${renderCredential('Email URL', credentials.email_url || (credentials.domain ? `${credentials.domain}/webmail` : ''))}
               ${renderCredential('Support Email Password', credentials.support_email_password)}
               ${renderCredential('Database Name', credentials.database_name)}
               ${renderCredential('Database User', credentials.database_user)}
               ${renderCredential('Database Password', credentials.database_user_password)}
               ${renderCredential('Nameservers', (credentials.nameservers || []).join(', '))}
+              ${renderCredential('Server IP', credentials.server_ip)}
             </div>
           </div>
         </div>
@@ -2126,11 +2132,13 @@ INDEX = """<!doctype html>
         ['cPanel Username', credentials.cpanel_username],
         ['cPanel Password', credentials.cpanel_account_password || 'Already available on the existing account'],
         ['Support Email', credentials.support_email],
+        ['Email URL', credentials.email_url || (credentials.domain ? `${credentials.domain}/webmail` : '')],
         ['Support Email Password', credentials.support_email_password],
         ['Database Name', credentials.database_name],
         ['Database User', credentials.database_user],
         ['Database Password', credentials.database_user_password],
         ['Nameservers', (credentials.nameservers || []).join(', ')],
+        ['Server IP', credentials.server_ip],
       ].filter(([, value]) => value);
       copyText(rows.map(([label, value]) => `${label}: ${value}`).join('\\n'), button);
     }

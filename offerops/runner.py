@@ -57,6 +57,8 @@ class OfferProvisioner:
         db_password = WhmClient.random_password()
         database_info: dict[str, object] = {}
         support_email = f"support@{job.domain}"
+        server_ip = self.config.server_ip_for(job.profile)
+        email_url = f"{job.domain}/webmail"
 
         steps = [
             ("cloudflare-zone", lambda: cloudflare.ensure_zone(job.domain, self.config.defaults.get("cloudflare_plan", "free"))),
@@ -115,11 +117,13 @@ class OfferProvisioner:
                 if account_existed
                 else "Shown because this run created the cPanel account.",
                 "support_email": support_email,
+                "email_url": email_url,
                 "support_email_password": mail_password,
                 "database_name": str(database_info.get("database", "")),
                 "database_user": str(database_info.get("user", "")),
                 "database_user_password": db_password,
                 "nameservers": nameservers,
+                "server_ip": server_ip,
             }
             if result.status != StepStatus.FAILED
             else {}
@@ -142,6 +146,7 @@ class OfferProvisioner:
                                 if account_existed
                                 else "Shown because this run created the cPanel account.",
                                 "support_email": support_email,
+                                "email_url": email_url,
                                 "support_email_password": mail_password,
                                 "database_name": str(database_info.get("database", "")),
                                 "database_user": str(database_info.get("user", "")),
@@ -151,16 +156,19 @@ class OfferProvisioner:
                                 "offer_path": offer_path,
                                 "document_root": document_root,
                                 "nameservers": nameservers,
+                                "server_ip": server_ip,
                             },
                         )
                     ),
                     "domain": job.domain,
                     "cpanel_username": cpanel_username,
                     "support_email": support_email,
+                    "email_url": email_url,
                     "database_name": str(database_info.get("database", "")),
                     "database_user": str(database_info.get("user", "")),
                     "document_root": document_root,
                     "nameservers": nameservers,
+                    "server_ip": server_ip,
                 }
                 if result.status != StepStatus.FAILED
                 else {},

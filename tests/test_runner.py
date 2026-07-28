@@ -61,13 +61,19 @@ class RunnerTests(unittest.TestCase):
 
     def test_credentials_are_available_in_memory_but_not_saved_state_payload(self) -> None:
         job_result = JobResult(domain="credsvisible.test", profile="sweeps-live", status=StepStatus.DONE)
-        job_result.credentials = {"support_email_password": "secret"}
+        job_result.credentials = {
+            "support_email_password": "secret",
+            "email_url": "credsvisible.test/webmail",
+            "server_ip": "203.0.113.30",
+        }
         public_payload = serialize_result(job_result)
         private_payload = serialize_result(job_result, include_credentials=True)
 
         self.assertNotIn("credentials", public_payload)
         self.assertIn("credentials", private_payload)
         self.assertIn("support_email_password", private_payload["credentials"])
+        self.assertEqual(private_payload["credentials"]["email_url"], "credsvisible.test/webmail")
+        self.assertEqual(private_payload["credentials"]["server_ip"], "203.0.113.30")
 
 
 if __name__ == "__main__":

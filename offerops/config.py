@@ -141,6 +141,10 @@ class AppConfig:
         template = str(self.defaults.get("document_root_template", "public_html"))
         return template.format(domain=domain)
 
+    def server_ip_for(self, profile_name: str) -> str:
+        profile = self.profile(profile_name)
+        return self._server_ip_for(profile)
+
     @staticmethod
     def _stable_random_interval(domain: str, profile_name: str, minute_min: int, minute_max: int) -> int:
         if minute_min > minute_max:
@@ -178,6 +182,7 @@ class AppConfig:
             "sweeps_live_2",
             "sweeps_bkp_2",
             "sweeps_live_3",
+            "sweeps_live_4",
             "ecom_live",
             "ecom_bkp",
         ]
@@ -250,6 +255,13 @@ def load_settings() -> Settings:
             os.getenv("WHM_SWEEPS_LIVE_3_PACKAGE", ""),
             os.getenv("WHM_SWEEPS_LIVE_3_CONTACT_EMAIL", ""),
         ),
+        "sweeps_live_4": (
+            os.getenv("WHM_SWEEPS_LIVE_4_BASE_URL", ""),
+            os.getenv("WHM_SWEEPS_LIVE_4_USERNAME", ""),
+            os.getenv("WHM_SWEEPS_LIVE_4_API_TOKEN", ""),
+            os.getenv("WHM_SWEEPS_LIVE_4_PACKAGE", ""),
+            os.getenv("WHM_SWEEPS_LIVE_4_CONTACT_EMAIL", ""),
+        ),
     }
     orange_accounts = {
         "sweeps_live": (os.getenv("ORANGE_SWEEPS_LIVE_USERNAME", ""), os.getenv("ORANGE_SWEEPS_LIVE_PASSWORD", "")),
@@ -257,6 +269,7 @@ def load_settings() -> Settings:
         "sweeps_live_2": (os.getenv("ORANGE_SWEEPS_LIVE_2_USERNAME", ""), os.getenv("ORANGE_SWEEPS_LIVE_2_PASSWORD", "")),
         "sweeps_bkp_2": (os.getenv("ORANGE_SWEEPS_BKP_2_USERNAME", ""), os.getenv("ORANGE_SWEEPS_BKP_2_PASSWORD", "")),
         "sweeps_live_3": (os.getenv("ORANGE_SWEEPS_LIVE_3_USERNAME", ""), os.getenv("ORANGE_SWEEPS_LIVE_3_PASSWORD", "")),
+        "sweeps_live_4": (os.getenv("ORANGE_SWEEPS_LIVE_4_USERNAME", ""), os.getenv("ORANGE_SWEEPS_LIVE_4_PASSWORD", "")),
         "ecom_live": (os.getenv("ORANGE_ECOM_LIVE_USERNAME", ""), os.getenv("ORANGE_ECOM_LIVE_PASSWORD", "")),
         "ecom_bkp": (os.getenv("ORANGE_ECOM_BKP_USERNAME", ""), os.getenv("ORANGE_ECOM_BKP_PASSWORD", "")),
     }
